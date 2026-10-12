@@ -20,15 +20,37 @@ from pydantic import BaseModel, Field, ValidationError
 from flowpilot import APP_NAME
 
 
-def default_data_dir() -> Path:
-    """Return the per-user data folder (not created)."""
-    override = os.environ.get("FLOWPILOT_HOME")
-    if override:
-        return Path(override)
+def standard_data_dir() -> Path:
+    """The standard per-user folder: ``%APPDATA%/FlowPilot`` on Windows."""
     if sys.platform == "win32":
         base = os.environ.get("APPDATA") or str(Path.home() / "AppData" / "Roaming")
         return Path(base) / APP_NAME
     return Path.home() / f".{APP_NAME.lower()}"
+
+
+def location_pointer() -> Path:
+    """A small file in the standard folder that can redirect data to another folder."""
+    return standard_data_dir() / "data-location.txt"
+
+
+def default_data_dir() -> Path:
+    """Return the data folder in use (not created).
+
+    Order: ``FLOWPILOT_HOME`` environment variable, then the folder named in
+    ``data-location.txt`` (set from Settings → Data), then the standard folder.
+    """
+    override = os.environ.get("FLOWPILOT_HOME")
+    if override:
+        return Path(override)
+    pointer = location_pointer()
+    if pointer.exists():
+        try:
+            text = pointer.read_text("utf-8").strip()
+            if text:
+                return Path(text)
+        except OSError:
+            pass
+    return standard_data_dir()
 
 
 @dataclass(frozen=True)
@@ -150,6 +172,10 @@ class AppSettings(BaseModel):
     notify_desktop: bool = True
     telegram_bot_token: str = ""
     telegram_chat_id: str = ""
+    # remembered dashboard choices
+    last_flow_id: int | None = None
+    last_run_options: dict = Field(default_factory=dict)
+    last_target: dict = Field(default_factory=dict)
     # first launch wizard
     setup_completed: bool = False
     tray_mode: bool = False

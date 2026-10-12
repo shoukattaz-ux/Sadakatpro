@@ -17,7 +17,7 @@ from typing import Any
 
 from loguru import logger
 
-from flowpilot.core.selectors import candidates_from_descriptor, convert_devtools_selector
+from flowpilot.core.selectors import candidates_from_descriptor, convert_devtools_selector, describe_element
 from flowpilot.core.session import BrowserSession
 from flowpilot.core.steps import StepBase, new_step
 
@@ -39,7 +39,7 @@ def event_to_step(event: dict[str, Any], last: StepBase | None = None) -> tuple[
     kind = event.get("kind")
     desc = event.get("desc") or {}
     selector, fallbacks = _selectors(desc) if desc else ("", [])
-    common = {"selector": selector, "fallbacks": fallbacks}
+    common = {"selector": selector, "fallbacks": fallbacks, "element_desc": describe_element(desc) if desc else ""}
     if kind == "click":
         if event.get("button") == 2:
             return new_step("right_click", **common), False
@@ -221,8 +221,9 @@ class Recorder:
         self._emit(new_step("open_url", url=url))
 
     # -- pick element -----------------------------------------------------------------------
-    async def pick_element(self, timeout_s: float = 120) -> tuple[str, list[str]] | None:
-        """Let the user click an element (highlighted on hover). Returns (selector, fallbacks)."""
+    async def pick_element(self, timeout_s: float = 120) -> tuple[str, list[str], str] | None:
+        """Let the user click an element (highlighted on hover).
+        Returns (selector, fallbacks, plain-English element name)."""
         await self.install()
         loop = asyncio.get_running_loop()
         self._pick_future = loop.create_future()
@@ -253,7 +254,7 @@ class Recorder:
                 " setTimeout(() => el.style.outline = o, 1200); }")
         except Exception:
             pass
-        return cands[0], cands[1:]
+        return cands[0], cands[1:], describe_element(desc)
 
 
 # --------------------------------------------------------------------------- DevTools import

@@ -42,7 +42,7 @@ COMMON_FIELDS = (
     "delay_before", "delay_after", "humanize", "label", "note",
 )
 #: Internal fields never shown in the form.
-HIDDEN_FIELDS = ("id", "type", "enabled", "collapsed")
+HIDDEN_FIELDS = ("id", "type", "enabled", "collapsed", "element_desc")
 
 
 class StepBase(BaseModel):
@@ -56,6 +56,8 @@ class StepBase(BaseModel):
     collapsed: bool = False
     label: str = Field("", title="Label", description="A name for this step. 'Go to label' steps can jump here.")
     note: str = Field("", title="Note", description="Your own comment about this step.")
+    #: plain-English name of the element, filled by the recorder / Pick element ("the “Log in” button")
+    element_desc: str = ""
     selector: str = Field("", title="Element", description="Which element to use. Click 'Pick element' to choose it on the page.")
     fallbacks: list[str] = Field(default_factory=list, title="Backup selectors",
                                  description="Tried in order if the main selector finds nothing (one per line).")
@@ -105,6 +107,8 @@ class StepBase(BaseModel):
         """Short description of the element for summaries."""
         from flowpilot.core.selectors import describe_selector
 
+        if self.element_desc and self.selector:
+            return self.element_desc
         return describe_selector(self.selector) if self.selector else "an element"
 
 

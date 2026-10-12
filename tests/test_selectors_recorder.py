@@ -148,6 +148,7 @@ async def test_live_recording_and_pick(services, site_url):
         assert pw.text == "{{account.password}}"
         click = [s for s in recorded if s.type == "click"][-1]
         assert click.selector == '[data-testid="login-btn"]'
+        assert click.summary() == "Click the “Log in” button"
         assert types.count("open_url") == 1  # the navigation after the click is not recorded
 
         # Pick element: simulate the user clicking the heading while pick mode is on
@@ -158,6 +159,7 @@ async def test_live_recording_and_pick(services, site_url):
         await page.click("[data-testid=login-btn]")
         picked = await pick_task
         assert picked is not None and picked[0] == '[data-testid="login-btn"]'
+        assert picked[2] == "the “Log in” button"
         assert _json.dumps(picked)
     finally:
         await session.close()

@@ -188,3 +188,37 @@ def test_retention(services):
     assert apply_retention(services.repos, services.paths, 30) == 1
     assert not shot.exists()
     assert [r.flow_name for r in services.repos.runs.list()] == ["New"]
+
+
+async def test_profile_sync(services):
+    from flowpilot.adapters.base import RemoteProfile
+    from flowpilot.services.profile_sync import sync_profiles
+
+    class FakeAdapter:
+        def __init__(self, profiles):
+            self.profiles = profiles
+
+        async def list_profiles(self):
+            return self.profiles
+
+    conn = services.repos.connections.save(Connection(type="custom", name="C"))
+    fake = FakeAdapter([RemoteProfile("1", "One", group="G1"), RemoteProfile("2", "Two")])
+    res = await sync_profiles(services.repos, fake, conn)
+    assert (res.created, res.updated, res.total) == (2, 0, 2)
+    assert [g.name for g in services.repos.groups.list()] == ["G1"]
+    fake.profiles = [RemoteProfile("1", "One renamed"), RemoteProfile("3", "Three")]
+    res = await sync_profiles(services.repos, fake, conn)
+    assert (res.created, res.updated) == (1, 1)
+    assert sorted(a.name for a in services.repos.accounts.list()) == ["One renamed", "Three", "Two"]
+
+
+def test_flow_snapshot(services):
+    r = services.repos.flows
+    flow = r.create("F", "[]")
+    assert r.snapshot(flow.id)
+    assert not r.snapshot(flow.id)  # unchanged
+    flow = r.get(flow.id)
+    flow.steps_json = '[{"type": "wait"}]'
+    r.save(flow, snapshot=False)
+    assert r.snapshot(flow.id)
+    assert [v.steps_json for v in r.versions(flow.id)] == ['[{"type": "wait"}]', "[]"]

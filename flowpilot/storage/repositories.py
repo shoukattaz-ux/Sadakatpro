@@ -232,6 +232,27 @@ class FlowRepo(_Repo):
                     s.commit()
             return merged
 
+    def snapshot(self, flow_id: int) -> bool:
+        """Store the flow's current steps as a version (if they differ from the newest
+        version). Keeps the last 10. Returns True if a version was added."""
+        with self._session() as s:
+            flow = s.get(Flow, flow_id)
+            if flow is None:
+                return False
+            latest = s.scalar(select(FlowVersion).where(FlowVersion.flow_id == flow_id)
+                              .order_by(FlowVersion.version.desc()).limit(1))
+            if latest is not None and latest.steps_json == flow.steps_json:
+                return False
+            s.add(FlowVersion(flow_id=flow_id, version=flow.version, steps_json=flow.steps_json))
+            flow.version += 1
+            s.commit()
+            old_ids = list(s.scalars(select(FlowVersion.id).where(FlowVersion.flow_id == flow_id)
+                                     .order_by(FlowVersion.version.desc()).offset(MAX_FLOW_VERSIONS)))
+            if old_ids:
+                s.execute(delete(FlowVersion).where(FlowVersion.id.in_(old_ids)))
+                s.commit()
+            return True
+
     def versions(self, flow_id: int) -> list[FlowVersion]:
         with self._session() as s:
             return list(

@@ -145,6 +145,29 @@ def candidates_from_descriptor(desc: dict[str, Any], max_candidates: int = 4) ->
     return ordered[:max_candidates]
 
 
+ROLE_WORDS = {"textbox": "field", "searchbox": "search box", "combobox": "dropdown", "link": "link",
+              "button": "button", "checkbox": "checkbox", "radio": "option", "menuitem": "menu item", "tab": "tab"}
+
+
+def describe_element(desc: dict[str, Any]) -> str:
+    """Plain-English name of a recorded element, e.g. 'the “Log in” button'."""
+    role = str(desc.get("role") or "").lower()
+    name = _clean_text(desc.get("name") or desc.get("label") or desc.get("text"), 40)
+    noun = ROLE_WORDS.get(role, "")
+    if not noun:
+        tag = str(desc.get("tag") or "").lower()
+        noun = {"img": "image", "a": "link", "input": "field", "select": "dropdown", "textarea": "text box"}.get(tag, "")
+    if name and noun:
+        return f"the “{name}” {noun}"
+    if name:
+        return f"“{name}”"
+    attrs = desc.get("attrs") or {}
+    hint = attrs.get("placeholder") or attrs.get("aria-label") or attrs.get("name") or desc.get("id")
+    if hint:
+        return f"the “{hint}” {noun or 'element'}"
+    return ""
+
+
 def describe_selector(selector: str) -> str:
     """Plain-English description of a selector for step summaries."""
     m = re.match(r'role=(\w+)\[name="(.+)"\]', selector)

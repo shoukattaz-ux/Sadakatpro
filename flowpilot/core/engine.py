@@ -251,6 +251,7 @@ class RunEngine:
         active = _ActiveRun(run, flow, steps, options, control, state_groups)
         self.runs[run.id] = active
         self._emit("run_started", run.id, flow_name=flow.name, total=run.total, test_mode=options.test_mode,
+                   steps=len(steps), concurrency=options.concurrency,
                    items=[{"item_id": s.item.id, "account": s.account.name, "group": name, "status": s.item.status}
                           for name, states in state_groups for s in states])
         active.task = asyncio.get_running_loop().create_task(self._run_batch(active))
