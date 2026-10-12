@@ -1,0 +1,11 @@
+<!doctype html>
+<html><head><title>Welcome</title></head>
+<body>
+  <h1 id="hello">Welcome</h1>
+  <p>Signed in as <span id="who"></span></p>
+  <p>Price: <span class="price">$42.50</span></p>
+  <script>
+    const q = new URLSearchParams(location.search);
+    document.getElementById('who').textContent = q.get('email') || 'nobody';
+  </script>
+</body></html>

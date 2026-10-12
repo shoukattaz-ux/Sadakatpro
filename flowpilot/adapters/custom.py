@@ -1,0 +1,151 @@
+"""Custom adapter: support any anti-detect browser (including your own) without code.
+
+Everything is configured in the connection editor:
+
+* ``start_url`` / ``stop_url`` / ``list_url`` / ``status_url`` — paths or full URLs.
+  ``{id}`` is replaced by the profile ID and ``{api_key}`` by the key.
+* ``*_method`` — ``GET`` or ``POST``; ``*_body`` — optional JSON body template.
+* ``key_location`` — ``header``, ``query`` or ``none``; ``key_name`` and ``key_prefix``
+  (e.g. ``Authorization`` + ``Bearer ``).
+* ``ws_path`` — JSON path to the CDP endpoint in the start answer (e.g. ``data.ws.puppeteer``).
+  If the value is only a port number, ``ws://127.0.0.1:<port>`` is not guessed — instead the
+  ``http://127.0.0.1:<port>`` address is used, which Playwright also accepts.
+* ``list_items_path`` / ``list_id_path`` / ``list_name_path`` / ``list_group_path`` — where
+  to find profiles in the list answer.
+* ``success_path`` + ``success_value`` — optional check (e.g. ``code`` == ``0``).
+"""
+
+from __future__ import annotations
+
+import json
+from typing import Any
+
+from flowpilot.adapters.base import (
+    AdapterError,
+    BaseHttpAdapter,
+    ConnectionResult,
+    ExtraField,
+    HttpClient,
+    RemoteProfile,
+    json_path,
+)
+
+
+class CustomAdapter(BaseHttpAdapter):
+    display_name = "Custom"
+    default_base_url = "http://127.0.0.1:50325"
+    api_key_help = "Leave empty if your browser's API does not need a key."
+    extra_fields = [
+        ExtraField("start_url", "Start URL", "Path or full URL. {id} = profile ID", "/api/v1/browser/start?user_id={id}"),
+        ExtraField("start_method", "Start method", "", "GET", choices=["GET", "POST"]),
+        ExtraField("start_body", "Start body (JSON)", 'Optional, e.g. {"profileId": "{id}"}', ""),
+        ExtraField("ws_path", "JSON path to WebSocket/CDP address", "e.g. data.ws.puppeteer", "data.ws.puppeteer"),
+        ExtraField("stop_url", "Stop URL", "Path or full URL. {id} = profile ID", "/api/v1/browser/stop?user_id={id}"),
+        ExtraField("stop_method", "Stop method", "", "GET", choices=["GET", "POST"]),
+        ExtraField("stop_body", "Stop body (JSON)", "Optional", ""),
+        ExtraField("list_url", "List profiles URL", "Path or full URL", "/api/v1/user/list?page_size=100"),
+        ExtraField("list_method", "List method", "", "GET", choices=["GET", "POST"]),
+        ExtraField("list_body", "List body (JSON)", "Optional", ""),
+        ExtraField("list_items_path", "JSON path to the profile list", "e.g. data.list", "data.list"),
+        ExtraField("list_id_path", "Profile ID field", "Inside each item, e.g. user_id", "user_id"),
+        ExtraField("list_name_path", "Profile name field", "Inside each item, e.g. name", "name"),
+        ExtraField("list_group_path", "Profile group field", "Optional, e.g. group_name", "group_name"),
+        ExtraField("status_url", "Is-running URL", "Optional. {id} = profile ID", ""),
+        ExtraField("status_path", "JSON path to running state", "e.g. data.status", ""),
+        ExtraField("status_running_value", "Value meaning 'running'", "e.g. Active", "Active"),
+        ExtraField("key_location", "Where the API key goes", "", "header", choices=["header", "query", "none"]),
+        ExtraField("key_name", "API key header/parameter name", "", "Authorization"),
+        ExtraField("key_prefix", "API key prefix", "Text before the key, e.g. 'Bearer '", "Bearer "),
+        ExtraField("success_path", "Success field (optional)", "e.g. code", ""),
+        ExtraField("success_value", "Success value", "e.g. 0", "0"),
+        ExtraField("host", "Debug host", "Used when the answer contains only a port", "127.0.0.1"),
+    ]
+
+    def _make_client(self) -> HttpClient:
+        headers: dict[str, str] = {}
+        params: dict[str, str] = {}
+        location = self.extra.get("key_location", "header")
+        if self.api_key and location == "header":
+            headers[self.extra.get("key_name") or "Authorization"] = f"{self.extra.get('key_prefix', '')}{self.api_key}"
+        elif self.api_key and location == "query":
+            params[self.extra.get("key_name") or "api_key"] = self.api_key
+        return HttpClient(self.base_url, headers=headers, params=params, transport=self._transport, timeout=120)
+
+    # -- helpers -----------------------------------------------------------------
+    def _fill(self, template: str, profile_id: str = "") -> str:
+        return template.replace("{id}", profile_id).replace("{api_key}", self.api_key)
+
+    def _body(self, key: str, profile_id: str = "") -> Any:
+        raw = (self.extra.get(key) or "").strip()
+        if not raw:
+            return None
+        try:
+            return json.loads(self._fill(raw, profile_id))
+        except ValueError as exc:
+            raise AdapterError(f"The '{key}' JSON in this connection is not valid: {exc}") from exc
+
+    async def _call(self, prefix: str, profile_id: str = "") -> Any:
+        url = self.extra.get(f"{prefix}_url") or ""
+        if not url:
+            raise AdapterError(f"This custom connection has no '{prefix}' URL configured.")
+        method = self.extra.get(f"{prefix}_method") or "GET"
+        data = await self.http.request(method, self._fill(url, profile_id), json=self._body(f"{prefix}_body", profile_id))
+        self._check_success(data)
+        return data
+
+    def _check_success(self, data: Any) -> None:
+        path = (self.extra.get("success_path") or "").strip()
+        if not path:
+            return
+        value = json_path(data, path)
+        if str(value) != str(self.extra.get("success_value", "")):
+            message = json_path(data, "msg") or json_path(data, "message") or json_path(data, "error") or data
+            raise AdapterError(f"The browser API reported a failure: {str(message)[:300]}")
+
+    # -- adapter API ---------------------------------------------------------------
+    async def test_connection(self) -> ConnectionResult:
+        if not self.extra.get("list_url"):
+            try:
+                await self.http.request("GET", "/")
+            except AdapterError as exc:
+                return ConnectionResult(False, str(exc))
+            return ConnectionResult(True, "The API address answered.")
+        return await super().test_connection()
+
+    async def list_profiles(self) -> list[RemoteProfile]:
+        data = await self._call("list")
+        items = json_path(data, self.extra.get("list_items_path") or "") if self.extra.get("list_items_path") else data
+        if not isinstance(items, list):
+            raise AdapterError("Could not find the profile list in the answer. Check 'JSON path to the profile list'.")
+        result = []
+        for it in items:
+            pid = json_path(it, self.extra.get("list_id_path") or "id")
+            if pid is None:
+                continue
+            name = json_path(it, self.extra.get("list_name_path") or "name") or pid
+            group = json_path(it, self.extra.get("list_group_path") or "") if self.extra.get("list_group_path") else ""
+            result.append(RemoteProfile(id=str(pid), name=str(name), group=str(group or "")))
+        return result
+
+    async def start_profile(self, profile_id: str) -> str:
+        data = await self._call("start", profile_id)
+        value = json_path(data, self.extra.get("ws_path") or "")
+        self._expect(value not in (None, ""), "Could not find the debugging address in the start answer. "
+                     "Check 'JSON path to WebSocket/CDP address'.", data)
+        text = str(value)
+        if text.isdigit():
+            return f"http://{self.extra.get('host') or '127.0.0.1'}:{text}"
+        if text.startswith(("ws://", "wss://", "http://", "https://")):
+            return text
+        return f"ws://{text}"  # e.g. "127.0.0.1:9222/devtools/browser/..."
+
+    async def stop_profile(self, profile_id: str) -> None:
+        if self.extra.get("stop_url"):
+            await self._call("stop", profile_id)
+
+    async def is_running(self, profile_id: str) -> bool:
+        if not self.extra.get("status_url"):
+            return False
+        data = await self._call("status", profile_id)
+        value = json_path(data, self.extra.get("status_path") or "")
+        return str(value).lower() == str(self.extra.get("status_running_value", "")).lower()

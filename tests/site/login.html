@@ -1,0 +1,28 @@
+<!doctype html>
+<html><head><title>Test Login</title></head>
+<body style="min-height:1800px">
+  <h1>Sign in</h1>
+  <form id="f" onsubmit="event.preventDefault(); login();">
+    <label for="email">Email</label>
+    <input id="email" name="email" type="email" placeholder="Email address">
+    <label for="pw">Password</label>
+    <input id="pw" name="password" type="password">
+    <select id="country" name="country"><option value="us">United States</option><option value="de">Germany</option></select>
+    <input type="checkbox" id="remember" name="remember"> <label for="remember">Remember me</label>
+    <button type="submit" data-testid="login-btn">Log in</button>
+  </form>
+  <a href="#" id="popup" onclick="window.open('/welcome.html?popup=1'); return false;">Open popup</a>
+  <button id="later" style="display:none" onclick="this.textContent='clicked'">Late button</button>
+  <div id="result"></div>
+  <script>
+    setTimeout(() => { document.getElementById('later').style.display = 'inline'; }, 1200);
+    function login() {
+      const e = document.getElementById('email').value;
+      const p = document.getElementById('pw').value;
+      const c = document.getElementById('country').value;
+      const r = document.getElementById('remember').checked;
+      if (!e || !p) { document.getElementById('result').textContent = 'Missing'; return; }
+      location.href = '/welcome.html?email=' + encodeURIComponent(e) + '&c=' + c + '&r=' + r;
+    }
+  </script>
+</body></html>
