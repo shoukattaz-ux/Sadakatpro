@@ -10,6 +10,8 @@ from flowpilot.core.adapter_pool import AdapterPool
 from flowpilot.core.engine import RunEngine
 from flowpilot.core.session import PlaywrightHolder
 from flowpilot.security import SecretBox
+from flowpilot.services.notifications import Notifier
+from flowpilot.services.scheduler import SchedulerService
 from flowpilot.storage.db import Database
 from flowpilot.storage.repositories import Repositories
 
@@ -24,6 +26,8 @@ class Services:
     adapters: AdapterPool
     playwright: PlaywrightHolder
     engine: RunEngine
+    scheduler: SchedulerService
+    notifier: Notifier
 
     @classmethod
     def create(cls, data_dir: Path | None = None) -> Services:
@@ -35,9 +39,13 @@ class Services:
         adapters = AdapterPool(repos.connections)
         playwright = PlaywrightHolder()
         engine = RunEngine(repos, settings, paths, adapters, playwright)
-        return cls(paths, settings, db, secrets, repos, adapters, playwright, engine)
+        scheduler = SchedulerService(repos, engine)
+        notifier = Notifier(settings)
+        notifier.attach(engine)
+        return cls(paths, settings, db, secrets, repos, adapters, playwright, engine, scheduler, notifier)
 
     async def aclose(self) -> None:
+        self.scheduler.shutdown()
         await self.engine.shutdown()
         await self.adapters.aclose()
         self.db.dispose()

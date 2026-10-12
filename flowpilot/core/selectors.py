@@ -79,64 +79,70 @@ def candidates_from_descriptor(desc: dict[str, Any], max_candidates: int = 4) ->
     """Build an ordered list of selectors (primary first) from an element descriptor.
 
     ``desc`` keys: ``tag``, ``id``, ``attrs`` (dict), ``role``, ``name``, ``text``, ``label``,
-    ``css`` (short CSS path), ``xpath``, ``counts`` (selector -> number of matches on page).
-    Candidates known to match more than one element are moved to the end.
+    ``css`` (short CSS path), ``xpath`` and ``counts``: how many elements on the page share
+    that property, keyed by kind (an attribute name, ``id``, ``text``, ``role_name``, ``label``,
+    ``css``). Candidates known to match more than one element are moved to the end.
     """
     tag = str(desc.get("tag") or "").lower()
     attrs: dict[str, str] = {k: str(v) for k, v in (desc.get("attrs") or {}).items() if v is not None}
     counts: dict[str, int] = {k: int(v) for k, v in (desc.get("counts") or {}).items()}
-    out: list[str] = []
+    found: list[tuple[str, str]] = []  # (selector, kind)
 
-    def add(sel: str) -> None:
-        if sel and sel not in out:
-            out.append(sel)
+    def add(sel: str, kind: str) -> None:
+        if sel and sel not in (s for s, _ in found):
+            found.append((sel, kind))
+
+    def attr_sel(name: str, value: str, with_tag: bool = True) -> str:
+        return f"{tag}[{name}={quote(value)}]" if tag and with_tag else f"[{name}={quote(value)}]"
 
     # 1. data-* attributes
     for name in PREFERRED_DATA_ATTRS:
         if attrs.get(name):
-            add(f"[{name}={quote(attrs[name])}]")
+            add(attr_sel(name, attrs[name], with_tag=False), name)
     for name, value in attrs.items():
         if (name.startswith("data-") and name not in PREFERRED_DATA_ATTRS and value and len(value) <= 50
                 and not name.startswith(IGNORED_DATA_ATTRS) and not looks_dynamic(value)):
-            add(f"{tag}[{name}={quote(value)}]" if tag else f"[{name}={quote(value)}]")
+            add(attr_sel(name, value), name)
     # 2. role + accessible name
     role = str(desc.get("role") or "").lower()
     name = _clean_text(desc.get("name"))
     if role in INTERACTIVE_ROLES and name:
-        add(f"role={role}[name={quote(name)}]")
+        add(f"role={role}[name={quote(name)}]", "role_name")
     # 3. visible text (only for clickable things with short text)
     text = _clean_text(desc.get("text"), 50)
     if text and (role in {"button", "link", "menuitem", "tab", "option"} or tag in {"button", "a", "label", "span"}):
-        add(f"text={quote(text)}")
+        add(f"text={quote(text)}", "text")
     # 4. label / placeholder / aria-label / name / title / alt
     label = _clean_text(desc.get("label"))
     if label:
-        add(f"internal:label={quote(label)}i")
+        add(f"internal:label={quote(label)}i", "label")
     for attr in ("placeholder", "aria-label"):
         if attrs.get(attr):
-            add(f"{tag}[{attr}={quote(attrs[attr])}]" if tag else f"[{attr}={quote(attrs[attr])}]")
+            add(attr_sel(attr, attrs[attr]), attr)
     if attrs.get("name") and not looks_dynamic(attrs["name"]):
-        add(f"{tag}[name={quote(attrs['name'])}]" if tag else f"[name={quote(attrs['name'])}]")
+        add(attr_sel("name", attrs["name"]), "name")
     for attr in ("title", "alt"):
         if attrs.get(attr) and len(attrs[attr]) <= 60:
-            add(f"{tag}[{attr}={quote(attrs[attr])}]" if tag else f"[{attr}={quote(attrs[attr])}]")
+            add(attr_sel(attr, attrs[attr]), attr)
     # 5. stable id
     elem_id = str(desc.get("id") or "")
     if elem_id and not looks_dynamic(elem_id):
-        add(f"#{css_ident(elem_id)}")
+        add(f"#{css_ident(elem_id)}", "id")
     # 6. short css path
     if desc.get("css"):
-        add(str(desc["css"]))
+        add(str(desc["css"]), "css")
     # 7. xpath
+    xpath = ""
     if desc.get("xpath"):
         xp = str(desc["xpath"])
-        add(xp if xp.startswith("xpath=") else f"xpath={xp}")
+        xpath = xp if xp.startswith("xpath=") else f"xpath={xp}"
 
-    unique = [s for s in out if counts.get(s, 1) == 1]
-    ambiguous = [s for s in out if counts.get(s, 1) != 1 and counts.get(s, 1) > 0]
+    unique = [s for s, kind in found if counts.get(kind, 1) == 1]
+    ambiguous = [s for s, kind in found if counts.get(kind, 1) > 1]
     ordered = unique + ambiguous
-    # Always keep the xpath as the very last fallback if we have room.
-    return ordered[:max_candidates] if len(ordered) <= max_candidates else ordered[: max_candidates - 1] + [ordered[-1]]
+    if xpath:  # XPath is always the last resort
+        ordered = ordered[: max_candidates - 1] + [xpath]
+    return ordered[:max_candidates]
 
 
 def describe_selector(selector: str) -> str:
