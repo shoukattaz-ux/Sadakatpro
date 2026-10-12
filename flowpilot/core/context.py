@@ -12,7 +12,7 @@ from typing import TYPE_CHECKING, Any
 from loguru import logger
 
 from flowpilot.config import AppSettings
-from flowpilot.core.errors import BrowserDisconnected, StopRequested
+from flowpilot.core.errors import BrowserDisconnected, ElementNotFound, StopRequested
 from flowpilot.core.humanize import Humanizer
 from flowpilot.core.selectors import resolve_locator
 from flowpilot.core.variables import Variables
@@ -139,6 +139,9 @@ class StepContext:
     close_browser_cb: Callable[[], Awaitable[None]] | None = None
     screenshot_cb: Callable[[str], None] | None = None
     notify_cb: Callable[[str], None] | None = None
+    #: called with (step, HealResult) when a selector was self-healed
+    heal_cb: Callable[[Any, Any], None] | None = None
+    healed: list[tuple[Any, Any]] = field(default_factory=list)
 
     # -- defaults ------------------------------------------------------------------
     def timeout_for(self, step: StepBase) -> float:
@@ -175,8 +178,25 @@ class StepContext:
         primary = selector if selector is not None else step.selector
         extra = fallbacks if fallbacks is not None else step.fallbacks
         candidates = [self.render(s) for s in [primary, *extra] if s]
-        locator, _ = await resolve_locator(page, candidates, self.timeout_for(step), state=state,
-                                           check=self.control.checkpoint)
+        try:
+            locator, _ = await resolve_locator(page, candidates, self.timeout_for(step), state=state,
+                                               check=self.control.checkpoint)
+        except ElementNotFound:
+            # Self-healing: only for the step's own element, never for a second target
+            # (e.g. drag & drop's drop zone) and never when variables changed the selector.
+            if not (self.settings.self_heal and step.element_fp and selector is None):
+                raise
+            from flowpilot.core.healing import heal_locator
+
+            healed = await heal_locator(page, step.element_fp)
+            if healed is None:
+                raise
+            locator, result = healed
+            self.healed.append((step, result))
+            self.log("warning", f"Self-healed “{step.summary()}”: the element was found again as {result.selector} "
+                                f"(confidence {result.score:g}). Review it in the Flows page.")
+            if self.heal_cb:
+                self.heal_cb(step, result)
         if self.test_mode:
             await self.highlight(locator)
         return locator

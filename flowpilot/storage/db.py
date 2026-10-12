@@ -22,7 +22,14 @@ def _migration_1(conn_engine: Engine) -> None:
     Base.metadata.create_all(conn_engine)
 
 
-MIGRATIONS: list[Callable[[Engine], None]] = [_migration_1]
+def _migration_2(conn_engine: Engine) -> None:
+    """Self-healing selector suggestions (``selector_heals``)."""
+    from flowpilot.storage.models import SelectorHeal
+
+    SelectorHeal.__table__.create(conn_engine, checkfirst=True)
+
+
+MIGRATIONS: list[Callable[[Engine], None]] = [_migration_1, _migration_2]
 
 
 class Database:

@@ -149,3 +149,22 @@ class Schedule(Base):
     next_run: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     last_result: Mapped[str] = mapped_column(String(256), default="")
     last_run_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+
+class SelectorHeal(Base):
+    """A selector that was self-healed during a run, waiting for the user to accept it."""
+
+    __tablename__ = "selector_heals"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    flow_id: Mapped[int | None] = mapped_column(ForeignKey("flows.id", ondelete="CASCADE"), nullable=True)
+    step_id: Mapped[str] = mapped_column(String(32))
+    step_summary: Mapped[str] = mapped_column(String(300), default="")
+    old_selector: Mapped[str] = mapped_column(Text, default="")
+    new_selector: Mapped[str] = mapped_column(Text, default="")
+    payload_json: Mapped[str] = mapped_column(Text, default="{}")  # new fallbacks + fingerprint
+    score: Mapped[float] = mapped_column(Float, default=0.0)
+    account_name: Mapped[str] = mapped_column(String(256), default="")
+    run_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    times: Mapped[int] = mapped_column(Integer, default=1)
+    status: Mapped[str] = mapped_column(String(16), default="pending")  # pending / applied / dismissed
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)

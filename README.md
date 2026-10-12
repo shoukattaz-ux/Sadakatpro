@@ -1,6 +1,13 @@
+<p align="center"><img src="flowpilot/resources/icons/flowpilot-256.png" width="128" alt="FlowPilot logo"></p>
+
 # FlowPilot
 
 **No-code browser automation for anti-detect browser profiles (Windows desktop app).**
+
+### ⬇ [Download FlowPilot for Windows (FlowPilot-Setup.exe)](https://github.com/shoukattaz-ux/Sadakatpro/releases/latest/download/FlowPilot-Setup.exe)
+
+Latest version, release notes and a portable zip: [Releases page](https://github.com/shoukattaz-ux/Sadakatpro/releases/latest).
+FlowPilot updates itself when a new version is published.
 
 FlowPilot connects to your anti-detect browser (AdsPower, GoLogin, Dolphin Anty, Multilogin X,
 Octo Browser — or any other browser through the *Custom* connection), opens your profiles, and
@@ -14,9 +21,13 @@ of steps you can edit, and you **run** it on your accounts.
 
 ## 1. Install
 
-### Option A — the ready-made app
-1. Download the `FlowPilot` folder (or zip) and put it anywhere, e.g. `C:\FlowPilot`.
-2. Double-click **FlowPilot.exe**.
+### Option A — the installer (recommended)
+1. Download **[FlowPilot-Setup.exe](https://github.com/shoukattaz-ux/Sadakatpro/releases/latest/download/FlowPilot-Setup.exe)**.
+2. Double-click it and follow the steps (no administrator rights needed). FlowPilot appears in the Start menu.
+   *Windows SmartScreen may say “Windows protected your PC” because the app is new and not code-signed yet:
+   click **More info → Run anyway**.*
+3. **Updates are automatic:** when a new version is out, a bar at the top of FlowPilot says so — click
+   **Update now**. Your flows, accounts and settings are kept.
 
 ### Option B — run from the source code
 1. Install **Python 3.11 or newer** from [python.org](https://www.python.org/downloads/)
@@ -79,6 +90,15 @@ Your browser profiles.
   FlowPilot saves a robust selector plus 2–3 backups.
 - Steps that still need something (for example an element) are shown **in red** with an explanation.
 - **Test flow (F5)**, **From here** and **This step** run on the test profile and highlight each element.
+- **AI build**: describe the task in your own words (“log in, then like the first 3 posts”) and FlowPilot
+  drafts the steps. With the test browser open, the AI sees the page's buttons and fields and uses real
+  selectors. You preview the steps before they are added (Ctrl+Z undoes it). Needs an Anthropic API key in
+  *Settings → AI* (you pay Anthropic per use; a draft costs a few cents). Without a key, simple requests are
+  drafted offline.
+- **List / Flowchart**: switch to the flowchart to see If/Else branches side by side and loops with their
+  “repeat” arrow. Click a box to edit that step.
+- **Self-healing**: if a website changes and a step's element can't be found, FlowPilot finds it again by its
+  text, role and position and continues. A yellow **Review** bar then lets you save the new selector.
 - **Ctrl+S** keeps a version; **History** restores one of the last 10 versions. Changes are saved automatically.
 - **Import** a flow `.json` or a **Chrome DevTools Recorder** export; **Export** shares a flow.
 
@@ -164,7 +184,23 @@ Logs are in the data folder (`%APPDATA%\FlowPilot\logs`), reachable via *Setting
 
 ---
 
-## 7. For developers
+## 7. Publishing an update (for the owner)
+
+1. Change the code, bump `__version__` in `flowpilot/__init__.py` (e.g. `0.3.0`) and add a `## [0.3.0]`
+   section to `CHANGELOG.md` (it becomes the release notes).
+2. Commit, then push a tag with the same version:
+   ```bash
+   git tag v0.3.0 && git push origin v0.3.0
+   ```
+3. GitHub Actions (`.github/workflows/release.yml`) runs all tests on Windows, builds `FlowPilot.exe`,
+   self-checks it with a real browser, builds `FlowPilot-Setup.exe` with Inno Setup and publishes a GitHub
+   Release with the installer, its SHA-256 checksum and a portable zip.
+4. Every installed FlowPilot sees the new release (on start, or *Settings → About → Check for updates*),
+   downloads it, verifies the checksum and updates itself.
+
+The download link above always points to the newest release.
+
+## 8. For developers
 
 ```
 flowpilot/
@@ -190,7 +226,7 @@ tests/                   unit tests (mocked HTTP) + integration tests on real Ch
 
 ```bash
 pip install -r requirements.txt pytest pytest-asyncio
-python -m pytest            # ~190 tests; browser tests need Chrome/Chromium/Edge (skipped otherwise)
+python -m pytest            # ~210 tests; browser tests need Chrome/Chromium/Edge (skipped otherwise)
 python run_flowpilot.py     # start the app
 python run_flowpilot.py --smoke-test --with-browser   # headless self-check (also used by build.bat)
 ```

@@ -2,6 +2,25 @@
 
 All notable changes to FlowPilot are listed here.
 
+## [0.2.0] — 2026-10-12
+
+### New
+- **AI step builder** — click *AI build* on the Flows page and describe the task in your own words
+  (“log in, then like the first 3 posts”). FlowPilot drafts the steps with Claude, using the elements of the
+  page open in the test browser for accurate selectors; you preview them before they are added.
+  Add your Anthropic API key in *Settings → AI*. Without a key, a simple offline parser drafts common steps.
+- **Self-healing selectors** — when a website changes and a recorded element can't be found, FlowPilot finds it
+  again by its text, role, attributes and position, continues the run, and shows a *Review* bar in the editor
+  to save the new selector (the old one is kept as a backup). Can be turned off in *Settings → Behavior*.
+- **Flowchart view** — switch the step editor between *List* and *Flowchart*: If/Else branches side by side,
+  loops with a “repeat” arrow, Try with its “On error” branch. Click a box to edit the step; Ctrl + wheel zooms.
+- **Automatic updates** — FlowPilot checks GitHub for new versions, shows an “update available” bar, downloads
+  the installer, verifies its SHA-256 checksum and installs it silently, then starts again.
+  *Settings → About → Check for updates* checks on demand.
+- **Windows installer** (`FlowPilot-Setup.exe`) — per-user install, no admin rights needed, Start-menu and
+  desktop shortcuts, clean upgrades; built and published automatically by GitHub Actions.
+- New app logo and icon.
+
 ## [0.1.0] — 2026-10-12
 
 First complete version, covering all eight build phases.

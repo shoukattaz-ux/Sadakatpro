@@ -158,9 +158,10 @@ async def test_live_recording_and_pick(services, site_url):
         await asyncio.sleep(0.5)
         await page.click("[data-testid=login-btn]")
         picked = await pick_task
-        assert picked is not None and picked[0] == '[data-testid="login-btn"]'
-        assert picked[2] == "the “Log in” button"
-        assert _json.dumps(picked)
+        assert picked is not None and picked.selector == '[data-testid="login-btn"]'
+        assert picked.element_desc == "the “Log in” button"
+        assert picked.element_fp["tag"] == "button" and picked.element_fp["name"] == "Log in"
+        assert _json.dumps(picked.element_fp)
     finally:
         await session.close()
         await adapter.aclose()

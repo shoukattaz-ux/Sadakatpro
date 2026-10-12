@@ -12,11 +12,13 @@ import asyncio
 import json
 import time
 from collections.abc import Callable
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 from loguru import logger
 
+from flowpilot.core.healing import fingerprint
 from flowpilot.core.selectors import candidates_from_descriptor, convert_devtools_selector, describe_element
 from flowpilot.core.session import BrowserSession
 from flowpilot.core.steps import StepBase, new_step
@@ -24,6 +26,16 @@ from flowpilot.core.steps import StepBase, new_step
 RECORDER_JS = (Path(__file__).parent / "recorder.js").read_text("utf-8")
 BINDING = "__flowpilotRecord"
 NAV_AFTER_ACTION_S = 2.5  # a navigation this soon after a click/Enter is caused by it -> not recorded
+
+@dataclass
+class PickResult:
+    """What 'Pick element' found."""
+
+    selector: str
+    fallbacks: list[str]
+    element_desc: str
+    element_fp: dict[str, Any]
+
 
 #: called with (step, replace_last)
 StepCallback = Callable[[StepBase, bool], None]
@@ -39,7 +51,8 @@ def event_to_step(event: dict[str, Any], last: StepBase | None = None) -> tuple[
     kind = event.get("kind")
     desc = event.get("desc") or {}
     selector, fallbacks = _selectors(desc) if desc else ("", [])
-    common = {"selector": selector, "fallbacks": fallbacks, "element_desc": describe_element(desc) if desc else ""}
+    common = {"selector": selector, "fallbacks": fallbacks, "element_desc": describe_element(desc) if desc else "",
+              "element_fp": fingerprint(desc)}
     if kind == "click":
         if event.get("button") == 2:
             return new_step("right_click", **common), False
@@ -221,9 +234,8 @@ class Recorder:
         self._emit(new_step("open_url", url=url))
 
     # -- pick element -----------------------------------------------------------------------
-    async def pick_element(self, timeout_s: float = 120) -> tuple[str, list[str], str] | None:
-        """Let the user click an element (highlighted on hover).
-        Returns (selector, fallbacks, plain-English element name)."""
+    async def pick_element(self, timeout_s: float = 120) -> PickResult | None:
+        """Let the user click an element (highlighted on hover)."""
         await self.install()
         loop = asyncio.get_running_loop()
         self._pick_future = loop.create_future()
@@ -254,7 +266,7 @@ class Recorder:
                 " setTimeout(() => el.style.outline = o, 1200); }")
         except Exception:
             pass
-        return cands[0], cands[1:], describe_element(desc)
+        return PickResult(cands[0], cands[1:], describe_element(desc), fingerprint(desc))
 
 
 # --------------------------------------------------------------------------- DevTools import

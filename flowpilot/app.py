@@ -24,6 +24,7 @@ def smoke_test() -> int:
 
     from PySide6.QtWidgets import QApplication
 
+    from flowpilot import __version__
     from flowpilot.services.container import Services
 
     app = QApplication.instance() or QApplication(sys.argv)
@@ -40,11 +41,18 @@ def smoke_test() -> int:
     for i in range(len(window.pages)):
         window.show_page(i)
         app.processEvents()
-    message = f"FlowPilot smoke test OK ({len(window.pages)} pages, recorder script {len(RECORDER_JS)} bytes)"
+    import anthropic  # the AI step builder's SDK must be bundled
+
+    message = (f"FlowPilot {__version__} smoke test OK ({len(window.pages)} pages, recorder script "
+               f"{len(RECORDER_JS)} bytes, anthropic {anthropic.__version__})")
     if "--with-browser" in sys.argv:
         message += "; " + asyncio.run(_browser_check(services))
     services.db.dispose()
     print(message)
+    if "--smoke-report" in sys.argv:  # the windowed exe has no console; CI reads this file
+        idx = sys.argv.index("--smoke-report")
+        if idx + 1 < len(sys.argv):
+            Path(sys.argv[idx + 1]).write_text(message, "utf-8")
     return 0
 
 

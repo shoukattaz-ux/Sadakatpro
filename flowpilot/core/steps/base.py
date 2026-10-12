@@ -42,7 +42,7 @@ COMMON_FIELDS = (
     "delay_before", "delay_after", "humanize", "label", "note",
 )
 #: Internal fields never shown in the form.
-HIDDEN_FIELDS = ("id", "type", "enabled", "collapsed", "element_desc")
+HIDDEN_FIELDS = ("id", "type", "enabled", "collapsed", "element_desc", "element_fp")
 
 
 class StepBase(BaseModel):
@@ -58,6 +58,8 @@ class StepBase(BaseModel):
     note: str = Field("", title="Note", description="Your own comment about this step.")
     #: plain-English name of the element, filled by the recorder / Pick element ("the “Log in” button")
     element_desc: str = ""
+    #: fingerprint of the recorded element, used by self-healing (see core/healing.py)
+    element_fp: dict[str, Any] = Field(default_factory=dict)
     selector: str = Field("", title="Element", description="Which element to use. Click 'Pick element' to choose it on the page.")
     fallbacks: list[str] = Field(default_factory=list, title="Backup selectors",
                                  description="Tried in order if the main selector finds nothing (one per line).")

@@ -16,7 +16,7 @@ datas += copy_metadata("playwright")
 hiddenimports = (
     collect_submodules("apscheduler")
     + collect_submodules("flowpilot")
-    + ["keyring.backends.Windows", "qasync", "PySide6.QtSvg"]
+    + ["keyring.backends.Windows", "qasync", "PySide6.QtSvg", "anthropic"]
 )
 
 a = Analysis(

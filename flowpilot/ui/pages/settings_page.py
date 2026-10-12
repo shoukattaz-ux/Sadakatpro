@@ -131,6 +131,7 @@ class SettingsPage(Page):
         self.tabs.addTab(_scroll(self._appearance_tab()), "Appearance")
         self.tabs.addTab(_scroll(self._data_tab()), "Data")
         self.tabs.addTab(_scroll(self._notifications_tab()), "Notifications")
+        self.tabs.addTab(_scroll(self._ai_tab()), "AI")
         self.tabs.addTab(_scroll(self._about_tab()), "About")
 
     # ------------------------------------------------------------------ connections
@@ -311,6 +312,9 @@ class SettingsPage(Page):
         f.toggle("Close the browser when a flow ends", lambda: s.close_browser_at_end,
                  lambda v: setattr(s, "close_browser_at_end", v),
                  "Failed or stopped accounts are always closed. This is about successful ones.")
+        f.toggle("Self-healing selectors", lambda: s.self_heal, lambda v: setattr(s, "self_heal", v),
+                 "If a recorded element can't be found (the website changed), find it again by its text, role and "
+                 "position, continue the run and ask you to save the new selector.")
         f.section("Runs")
         f.number("Retry failed accounts", lambda: s.retry_failed_accounts,
                  lambda v: setattr(s, "retry_failed_accounts", int(v)), 0, 10,
@@ -488,6 +492,74 @@ class SettingsPage(Page):
         f.finish()
         return f
 
+    # ------------------------------------------------------------------ AI
+    def _ai_tab(self) -> QWidget:
+        s = self.app.settings
+        secrets = self.app.services.secrets
+        f = _Form(self.app)
+        f.section("AI step builder", "Describe a task in plain English and FlowPilot drafts the steps. Uses the "
+                  "Anthropic API (your own key, billed by Anthropic per use). Without a key a simple offline "
+                  "parser is used.")
+        key = QLineEdit()
+        key.setEchoMode(QLineEdit.EchoMode.Password)
+        key.setPlaceholderText("sk-ant-…  (or set the ANTHROPIC_API_KEY environment variable)")
+        try:
+            key.setText(secrets.decrypt(s.ai_api_key_encrypted) if s.ai_api_key_encrypted else "")
+        except Exception:
+            key.setText("")
+
+        def save_key() -> None:
+            s.ai_api_key_encrypted = secrets.encrypt(key.text().strip())
+            self.app.save_settings()
+
+        key.editingFinished.connect(save_key)
+        f.row("Anthropic API key", key, "Create one at console.anthropic.com → API keys. Stored encrypted on this PC.")
+        f.choice("Model", [("Claude Opus 5.5 (best)", "claude-opus-5-5"), ("Claude Sonnet 5.5 (faster)", "claude-sonnet-5-5"),
+                           ("Claude Haiku 5.5 (cheapest)", "claude-haiku-5-5")],
+                 lambda: s.ai_model, lambda v: setattr(s, "ai_model", v))
+        status = QLabel("")
+        status.setWordWrap(True)
+        test = ClayButton("Test key", "plug", "secondary", compact=True)
+
+        def run_test() -> None:
+            save_key()
+            status.setText("Checking…")
+
+            async def go() -> str:
+                import anthropic
+
+                client = anthropic.AsyncAnthropic(api_key=key.text().strip(), timeout=20.0)
+                model = await client.models.retrieve(s.ai_model or "claude-opus-5-5")
+                return model.display_name
+
+            run_async(go(), lambda name: status.setText(f"✔ The key works ({name})."),
+                      lambda exc: status.setText(f"✖ The key did not work: {str(exc)[:150]}"))
+
+        test.clicked.connect(run_test)
+        trow = QWidget()
+        tl = QHBoxLayout(trow)
+        tl.setContentsMargins(0, 0, 0, 0)
+        tl.addWidget(test)
+        tl.addWidget(status, 1)
+        f.row("", trow)
+        f.finish()
+        return f
+
+    def _check_updates(self) -> None:
+        window = self.window()
+        self.update_status.setText("Checking…")
+
+        def result(info: Any, exc: BaseException | None) -> None:
+            if exc is not None:
+                self.update_status.setText(f"✖ {exc}")
+            elif info is None:
+                self.update_status.setText(f"✔ You have the latest version ({__version__}).")
+            else:
+                self.update_status.setText(f"Version {info.version} is available.")
+
+        if hasattr(window, "check_updates"):
+            window.check_updates(manual=True, on_result=result)
+
     # ------------------------------------------------------------------ about
     def _about_tab(self) -> QWidget:
         f = _Form(self.app)
@@ -496,6 +568,18 @@ class SettingsPage(Page):
         lic = check_license()
         f.row("License", QLabel(f"{lic.plan} — {lic.message}" if lic.message else lic.plan))
         f.row("Data folder", QLabel(str(self.app.services.paths.root)))
+        f.toggle("Check for updates automatically", lambda: self.app.settings.auto_check_updates,
+                 lambda v: setattr(self.app.settings, "auto_check_updates", v))
+        upd_row = QWidget()
+        ul = QHBoxLayout(upd_row)
+        ul.setContentsMargins(0, 0, 0, 0)
+        check = ClayButton("Check for updates", "refresh", "secondary", compact=True)
+        self.update_status = QLabel("")
+        self.update_status.setWordWrap(True)
+        check.clicked.connect(self._check_updates)
+        ul.addWidget(check)
+        ul.addWidget(self.update_status, 1)
+        f.row("Updates", upd_row)
         logs = ClayButton("Open logs folder", "folder", compact=True)
         logs.clicked.connect(lambda: QDesktopServices.openUrl(QUrl.fromLocalFile(str(self.app.services.paths.logs))))
         f.row("", logs)

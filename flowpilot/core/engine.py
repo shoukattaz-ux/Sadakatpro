@@ -509,6 +509,7 @@ class RunEngine:
                 log=lambda level, msg: self._log(active, st, level, msg),
                 screenshot_cb=lambda path: self._emit("item_screenshot", active.run.id, item.id, path=path),
                 notify_cb=lambda msg: self._emit("notify", active.run.id, item.id, message=msg),
+                heal_cb=lambda step, result: self._record_heal(active, st, step, result),
             )
             run_ctx = ctx
 
@@ -629,6 +630,17 @@ class RunEngine:
                        title=title, attempt=event.detail)
         elif event.status == "failed":
             self._log(active, st, "error", f"Step {event.index + 1} failed: {event.error}")
+
+    def _record_heal(self, active: _ActiveRun, st: _ItemState, step: StepBase, result: Any) -> None:
+        from flowpilot.core.healing import heal_payload
+        from flowpilot.storage.models import SelectorHeal
+
+        heal = self.repos.heals.add(SelectorHeal(
+            flow_id=active.flow.id, step_id=step.id, step_summary=step.summary()[:300], old_selector=step.selector,
+            new_selector=result.selector, payload_json=heal_payload(result), score=result.score,
+            account_name=st.account.name, run_id=active.run.id))
+        self._emit("selector_healed", active.run.id, st.item.id, flow_id=active.flow.id, heal_id=heal.id,
+                   step=step.summary(), selector=result.selector)
 
     def _set_status(self, active: _ActiveRun, st: _ItemState, status: str, message: str = "") -> None:
         st.item.status = status

@@ -1,0 +1,31 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#8F7CF7"/>
+      <stop offset="0.55" stop-color="#7C6CF2"/>
+      <stop offset="1" stop-color="#4FB8D6"/>
+    </linearGradient>
+    <linearGradient id="gloss" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#FFFFFF" stop-opacity="0.38"/>
+      <stop offset="0.5" stop-color="#FFFFFF" stop-opacity="0"/>
+    </linearGradient>
+    <linearGradient id="plane" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#FFFFFF"/>
+      <stop offset="1" stop-color="#E4E0FF"/>
+    </linearGradient>
+  </defs>
+  <!-- clay tile -->
+  <rect x="12" y="12" width="232" height="232" rx="64" fill="url(#bg)"/>
+  <rect x="12" y="12" width="232" height="232" rx="64" fill="url(#gloss)"/>
+  <!-- flow trail -->
+  <path d="M52 196 C 84 196, 92 150, 124 150 S 160 122, 170 104" fill="none" stroke="#FFFFFF"
+        stroke-opacity="0.75" stroke-width="9" stroke-linecap="round" stroke-dasharray="2 20"/>
+  <circle cx="52" cy="196" r="13" fill="#FFFFFF"/>
+  <circle cx="52" cy="196" r="5.5" fill="#7C6CF2"/>
+  <circle cx="124" cy="150" r="11" fill="#FFFFFF" fill-opacity="0.92"/>
+  <circle cx="124" cy="150" r="4.5" fill="#5EC8D8"/>
+  <!-- paper plane (the pilot) -->
+  <path d="M210 46 L 96 96 L 138 112 Z" fill="url(#plane)"/>
+  <path d="M210 46 L 138 112 L 150 160 Z" fill="#FFFFFF"/>
+  <path d="M210 46 L 138 112 L 132 136 Z" fill="#CFC8FF"/>
+</svg>

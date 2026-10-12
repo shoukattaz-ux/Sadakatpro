@@ -128,6 +128,9 @@
     return {
       tag, id: el.id || '', attrs, role, name, text: text.slice(0, 120), label, css, xpath: xpathOf(el), counts,
       inputType: (el.type || '').toLowerCase(), url: location.href,
+      rect: (() => { const r = el.getBoundingClientRect();
+        return { x: Math.round(r.left + window.scrollX), y: Math.round(r.top + window.scrollY),
+                 w: Math.round(r.width), h: Math.round(r.height) }; })(),
     };
   };
 
@@ -150,6 +153,59 @@
   };
   const hideOverlay = () => { if (overlay) overlay.style.display = 'none'; };
   window.__fpSetPick = (on) => { window.__fpPickMode = !!on; if (!on) hideOverlay(); };
+  window.__fpDescribe = describe;
+
+  // ---------------------------------------------------------------- self-healing
+  // Find the element that best matches a recorded fingerprint when every selector failed.
+  // Scores tag, role, accessible name, text, label, stable attributes and position.
+  const ATTR_WEIGHT = (k) => (/^data-(testid|test-id|test|qa|cy|automation-id)$/.test(k) ? 4 :
+    ['name', 'placeholder', 'aria-label', 'title', 'alt'].includes(k) ? 3 : 1.5);
+  window.__fpHeal = (fp) => {
+    if (!fp || !fp.tag) return null;
+    const tag = String(fp.tag).toUpperCase();
+    const seen = new Set();
+    const pool = [];
+    const add = (els) => { for (const el of els) { if (!seen.has(el) && pool.length < 4000) { seen.add(el); pool.push(el); } } };
+    add(document.getElementsByTagName(tag));
+    if (fp.role) add(document.querySelectorAll(`[role="${String(fp.role).replace(/"/g, '')}"]`));
+    if (fp.role === 'button' || fp.role === 'link') add(document.querySelectorAll('a,button,input[type=submit],input[type=button],[role=button],[role=link]'));
+    const fpName = norm(fp.name).toLowerCase();
+    const fpText = norm(fp.text).toLowerCase();
+    const fpLabel = norm(fp.label).toLowerCase();
+    const score = (el) => {
+      const r = el.getBoundingClientRect();
+      if (r.width === 0 && r.height === 0) return -1;
+      let s = 0;
+      if (el.tagName === tag) s += 2;
+      if (fp.role && roleOf(el) === fp.role) s += 2;
+      if (fpName) {
+        const n = nameOf(el).toLowerCase();
+        if (n === fpName) s += 5; else if (n && fpName.length > 2 && (n.includes(fpName) || fpName.includes(n))) s += 2.5;
+      }
+      if (fpText) {
+        const t = norm(el.innerText).toLowerCase();
+        if (t === fpText) s += 4; else if (t && fpText.length > 2 && t.length < 200 && (t.includes(fpText) || fpText.includes(t))) s += 1.5;
+      }
+      if (fpLabel && labelOf(el).toLowerCase() === fpLabel) s += 4;
+      for (const [k, v] of Object.entries(fp.attrs || {})) {
+        if (v && el.getAttribute(k) === v) s += ATTR_WEIGHT(k);
+      }
+      if (fp.id && el.id === fp.id) s += 3;
+      if (fp.rect) {
+        const d = Math.hypot(r.left + window.scrollX - fp.rect.x, r.top + window.scrollY - fp.rect.y);
+        s += Math.max(0, 2 - d / 250);
+      }
+      return s;
+    };
+    let best = null, bestScore = -1, second = -1;
+    for (const el of pool) {
+      const sc = score(el);
+      if (sc > bestScore) { second = bestScore; bestScore = sc; best = el; }
+      else if (sc > second) second = sc;
+    }
+    if (!best) return null;
+    return { desc: describe(best), score: Math.round(bestScore * 100) / 100, second: Math.round(Math.max(second, 0) * 100) / 100 };
+  };
 
   document.addEventListener('mousemove', (e) => {
     if (window.__fpPickMode && e.target && e.target.nodeType === 1) showOverlay(clickTarget(e.target));

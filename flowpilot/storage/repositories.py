@@ -25,6 +25,7 @@ from flowpilot.storage.models import (
     Run,
     RunItem,
     Schedule,
+    SelectorHeal,
     utcnow,
 )
 
@@ -359,6 +360,37 @@ class ScheduleRepo(_Repo):
         self._delete(Schedule, [schedule_id])
 
 
+class HealRepo(_Repo):
+    """Self-healing suggestions. The same heal seen again only bumps a counter."""
+
+    def add(self, heal: SelectorHeal) -> SelectorHeal:
+        with self._session() as s:
+            existing = s.scalar(select(SelectorHeal).where(
+                SelectorHeal.flow_id == heal.flow_id, SelectorHeal.step_id == heal.step_id,
+                SelectorHeal.new_selector == heal.new_selector, SelectorHeal.status == "pending"))
+            if existing is not None:
+                existing.times += 1
+                existing.score = max(existing.score, heal.score)
+                s.commit()
+                s.refresh(existing)
+                s.expunge(existing)
+                return existing
+        return self._save(heal)
+
+    def pending(self, flow_id: int | None = None) -> list[SelectorHeal]:
+        stmt = select(SelectorHeal).where(SelectorHeal.status == "pending").order_by(SelectorHeal.id)
+        if flow_id is not None:
+            stmt = stmt.where(SelectorHeal.flow_id == flow_id)
+        with self._session() as s:
+            return list(s.scalars(stmt))
+
+    def set_status(self, ids: list[int], status: str) -> None:
+        with self._session() as s:
+            for h in s.scalars(select(SelectorHeal).where(SelectorHeal.id.in_(ids))):
+                h.status = status
+            s.commit()
+
+
 class Repositories:
     """Convenience bundle of all repositories."""
 
@@ -371,3 +403,4 @@ class Repositories:
         self.flows = FlowRepo(db)
         self.runs = RunRepo(db)
         self.schedules = ScheduleRepo(db)
+        self.heals = HealRepo(db)

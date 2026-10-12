@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from PySide6.QtCore import QPoint, QRectF, QSize, Qt
+from PySide6.QtCore import QPoint, QRectF, QSize, Qt, QTimer
 from PySide6.QtGui import QAction, QCloseEvent, QColor, QIcon, QPainter, QPixmap
 from PySide6.QtWidgets import (
     QApplication,
@@ -15,6 +15,7 @@ from PySide6.QtWidgets import (
     QMenu,
     QStackedWidget,
     QSystemTrayIcon,
+    QVBoxLayout,
     QWidget,
 )
 
@@ -22,6 +23,7 @@ from flowpilot import __version__
 from flowpilot.ui.app_context import AppContext
 from flowpilot.ui.async_utils import confirm, run_async
 from flowpilot.ui.dialogs.setup_wizard import SetupWizard
+from flowpilot.ui.dialogs.update_dialog import UpdateBanner, UpdateDialog
 from flowpilot.ui.icons import pixmap
 from flowpilot.ui.pages.accounts_page import AccountsPage
 from flowpilot.ui.pages.base import Page
@@ -75,16 +77,28 @@ class NavButton(ClayButton):
 
 
 def app_icon() -> QIcon:
-    pm = QPixmap(64, 64)
-    pm.fill(Qt.GlobalColor.transparent)
-    p = QPainter(pm)
-    p.setRenderHint(QPainter.RenderHint.Antialiasing)
-    p.setPen(Qt.PenStyle.NoPen)
-    p.setBrush(QColor("#7C6CF2"))
-    p.drawRoundedRect(4, 4, 56, 56, 18, 18)
-    p.drawPixmap(16, 16, pixmap("zap", "#FFFFFF", 32))
-    p.end()
-    return QIcon(pm)
+    """The FlowPilot logo (resources/icons/flowpilot.svg) at every size Qt asks for."""
+    from flowpilot.config import resource_path
+
+    svg = resource_path("icons", "flowpilot.svg")
+    icon = QIcon()
+    if svg.exists():
+        from PySide6.QtSvg import QSvgRenderer
+
+        renderer = QSvgRenderer(str(svg))
+        for size in (16, 24, 32, 48, 64, 128, 256):
+            pm = QPixmap(size, size)
+            pm.fill(Qt.GlobalColor.transparent)
+            p = QPainter(pm)
+            p.setRenderHint(QPainter.RenderHint.Antialiasing)
+            renderer.render(p, QRectF(0, 0, size, size))
+            p.end()
+            icon.addPixmap(pm)
+        return icon
+    pm = QPixmap(64, 64)  # fallback: simple tile
+    pm.fill(QColor("#7C6CF2"))
+    icon.addPixmap(pm)
+    return icon
 
 
 class MainWindow(QMainWindow):
@@ -145,7 +159,18 @@ class MainWindow(QMainWindow):
         side.body.addLayout(bottom)
         side.body.addWidget(muted_label(f"v{__version__}"))
         lay.addWidget(side)
-        lay.addWidget(self.stack, 1)
+        right = QWidget()
+        right.setObjectName("Transparent")
+        right_lay = QVBoxLayout(right)
+        right_lay.setContentsMargins(0, 0, 0, 0)
+        right_lay.setSpacing(0)
+        self.update_banner = UpdateBanner()
+        self.update_banner.update_clicked.connect(self._open_update)
+        self.update_banner.skip_clicked.connect(self._skip_update)
+        right_lay.addWidget(self.update_banner)
+        right_lay.addWidget(self.stack, 1)
+        lay.addWidget(right, 1)
+        self._update_info = None
         self.nav.idClicked.connect(self.show_page)
         self.nav.button(0).setChecked(True)
         ThemeManager.instance().changed.connect(lambda *_: self._update_theme_icon())
@@ -178,7 +203,9 @@ class MainWindow(QMainWindow):
 
     # ------------------------------------------------------------------ prompts
     def first_launch(self) -> None:
-        """Setup wizard on first launch; offer to resume interrupted batches."""
+        """Setup wizard on first launch; offer to resume interrupted batches; check for updates."""
+        if self.app.settings.auto_check_updates:
+            QTimer.singleShot(6000, self.check_updates)
         if not self.app.settings.setup_completed and not self.app.repos.connections.list():
             self.show_wizard()
         interrupted = self.app.services.engine.interrupted_runs()
@@ -194,6 +221,37 @@ class MainWindow(QMainWindow):
                 self.show_page(0)
             else:
                 self.app.services.engine.discard_interrupted(run.id)
+
+    # ------------------------------------------------------------------ updates
+    def check_updates(self, manual: bool = False, on_result: Any = None) -> None:
+        """Ask GitHub for a newer release; shows the banner (or a message when ``manual``)."""
+        from flowpilot.services.updater import check_for_update
+
+        def done(info: Any) -> None:
+            self._update_info = info
+            skipped = self.app.settings.skipped_update_version
+            if info is not None and (manual or info.version != skipped):
+                self.update_banner.show_for(info)
+                if manual:
+                    self._open_update()
+            if on_result:
+                on_result(info, None)
+
+        def failed(exc: BaseException) -> None:
+            if on_result:
+                on_result(None, exc)
+
+        run_async(check_for_update(), done, failed)
+
+    def _open_update(self) -> None:
+        if self._update_info is not None:
+            UpdateDialog(self.app, self._update_info, self).exec()
+
+    def _skip_update(self) -> None:
+        if self._update_info is not None:
+            self.app.settings.skipped_update_version = self._update_info.version
+            self.app.save_settings()
+        self.update_banner.hide()
 
     def show_wizard(self) -> None:
         wiz = SetupWizard(self.app, self)

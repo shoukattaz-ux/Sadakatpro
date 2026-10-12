@@ -158,6 +158,7 @@ class AppSettings(BaseModel):
     retry_failed_accounts: int = 0
     max_run_minutes: float = 60.0
     skip_succeeded_today: bool = False
+    self_heal: bool = True
     resource_guard: bool = True
     resource_guard_cpu: float = 90.0
     resource_guard_ram: float = 90.0
@@ -176,6 +177,12 @@ class AppSettings(BaseModel):
     last_flow_id: int | None = None
     last_run_options: dict = Field(default_factory=dict)
     last_target: dict = Field(default_factory=dict)
+    # AI step builder
+    ai_api_key_encrypted: str = ""
+    ai_model: str = "claude-opus-5-5"
+    # updates
+    auto_check_updates: bool = True
+    skipped_update_version: str = ""
     # first launch wizard
     setup_completed: bool = False
     tray_mode: bool = False

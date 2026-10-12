@@ -82,13 +82,15 @@ class DebugSession:
 
     async def run(self, steps: list[StepBase], start: int = 0, stop_at: int | None = None,
                   on_event: Callable[[StepEvent], None] | None = None,
-                  log: Callable[[str, str], None] | None = None) -> RunOutcome:
+                  log: Callable[[str, str], None] | None = None,
+                  heal_cb: Callable[[Any, Any], None] | None = None) -> RunOutcome:
         """Run steps on the open page. ``stop_at`` = last index to run (inclusive)."""
         if not self.is_open:
             raise ValidationProblem("Open a test profile first.")
         ctx = self._context()
         if log:
             ctx.log = log
+        ctx.heal_cb = heal_cb
         runner = FlowRunner(steps, ctx, on_event)
         try:
             return await runner.run(start=start, stop_at=stop_at)

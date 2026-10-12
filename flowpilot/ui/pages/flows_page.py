@@ -19,6 +19,8 @@ from PySide6.QtWidgets import (
     QMenu,
     QPlainTextEdit,
     QSplitter,
+    QStackedWidget,
+    QWidget,
 )
 
 from flowpilot.core.errors import ValidationProblem
@@ -31,12 +33,16 @@ from flowpilot.core.templates import TEMPLATES
 from flowpilot.storage.models import Flow
 from flowpilot.ui.app_context import AppContext
 from flowpilot.ui.async_utils import confirm, info, run_async, show_error
+from flowpilot.ui.dialogs.ai_dialog import AiBuilderDialog
+from flowpilot.ui.dialogs.heal_dialog import HealDialog
 from flowpilot.ui.dialogs.recorder_toolbar import RecorderToolbar
 from flowpilot.ui.dialogs.simple_dialogs import TemplateDialog, VersionsDialog
 from flowpilot.ui.dialogs.step_picker import StepPicker
 from flowpilot.ui.pages.base import Page
 from flowpilot.ui.widgets.clay import ClayButton, ClayCard, EmptyState, IconButton, title_label
 from flowpilot.ui.widgets.step_form import StepForm
+from flowpilot.ui.theme.palette import pal
+from flowpilot.ui.widgets.flow_chart import FlowChart
 from flowpilot.ui.widgets.step_list import StepListWidget
 
 
@@ -114,8 +120,15 @@ class FlowsPage(Page):
         self.record_btn = ClayButton("Record", "record", "danger", compact=True,
                                      tooltip="Open the test profile and turn your actions into steps")
         self.record_btn.clicked.connect(self.toggle_recording)
+        self.ai_btn = ClayButton("AI build", "sparkles", "secondary", compact=True,
+                                 tooltip="Describe the task in your own words and let AI draft the steps")
+        self.ai_btn.clicked.connect(self.ai_build)
         tb.addWidget(self.add_btn)
         tb.addWidget(self.record_btn)
+        tb.addWidget(self.ai_btn)
+        tb.addStretch(1)
+        tb2 = QHBoxLayout()
+        tb2.setSpacing(0)
         for icon, tip, slot in (("undo", "Undo (Ctrl+Z)", self.undo), ("redo", "Redo (Ctrl+Y)", self.redo),
                                 ("copy", "Duplicate step (Ctrl+D)", self.duplicate_steps),
                                 ("eye", "Enable / disable step", self.toggle_enabled),
@@ -123,9 +136,31 @@ class FlowsPage(Page):
                                 ("trash", "Delete step (Del)", self.delete_steps)):
             b = IconButton(icon, tip, size=30)
             b.clicked.connect(slot)
-            tb.addWidget(b)
-        tb.addStretch(1)
+            tb2.addWidget(b)
+        tb2.addStretch(1)
+        self.list_btn = ClayButton("List", "list", compact=True, tooltip="Show the steps as a list")
+        self.chart_btn = ClayButton("Flowchart", "share", compact=True,
+                                    tooltip="Show the steps as a diagram (If / Loop branches)")
+        for b in (self.list_btn, self.chart_btn):
+            b.setCheckable(True)
+            b.setAutoExclusive(True)
+            tb2.addWidget(b)
+        self.list_btn.setChecked(True)
+        self.list_btn.toggled.connect(lambda on: self._show_chart(not on))
         center.body.addLayout(tb)
+        center.body.addLayout(tb2)
+        heal_row = QHBoxLayout()
+        self.heal_label = QLabel("")
+        self.heal_label.setWordWrap(True)
+        self.heal_btn = ClayButton("Review", "heart-pulse", "warning", compact=True)
+        self.heal_btn.clicked.connect(self.review_heals)
+        heal_row.addWidget(self.heal_label, 1)
+        heal_row.addWidget(self.heal_btn)
+        self.heal_bar = QWidget()
+        self.heal_bar.setObjectName("Transparent")
+        self.heal_bar.setLayout(heal_row)
+        self.heal_bar.hide()
+        center.body.addWidget(self.heal_bar)
         self.banner = QLabel("")
         self.banner.setProperty("role", "error")
         self.banner.setWordWrap(True)
@@ -137,7 +172,13 @@ class FlowsPage(Page):
         self.steps_view.collapse_toggled.connect(self._toggle_collapse)
         self.steps_view.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.steps_view.customContextMenuRequested.connect(self._step_menu)
-        center.body.addWidget(self.steps_view, 1)
+        self.chart = FlowChart()
+        self.chart.step_clicked.connect(self._chart_clicked)
+        self.chart.step_activated.connect(lambda i: self._chart_clicked(i, False))
+        self.views = QStackedWidget()
+        self.views.addWidget(self.steps_view)
+        self.views.addWidget(self.chart)
+        center.body.addWidget(self.views, 1)
         self.empty = EmptyState("record", "No steps yet",
                                 "Click Record to create your first steps by using the browser, or add steps by hand.",
                                 "Add step")
@@ -190,6 +231,7 @@ class FlowsPage(Page):
         delete.activated.connect(self.delete_steps)
 
         app.bridge.data_changed.connect(lambda what: self._reload_profiles() if what in ("accounts",) else None)
+        app.bridge.any_event.connect(lambda e: self._refresh_heals() if e.kind == "selector_healed" else None)
         self.reload_flows()
         self._reload_profiles()
         self._update_buttons()
@@ -241,7 +283,9 @@ class FlowsPage(Page):
             self.doc.reset(steps)
             self.flow_title.setText(flow.name)
         self.steps_view.clear_marks()
+        self.chart.clear_marks()
         self._refresh(keep=[0] if self.doc.steps else [])
+        self._refresh_heals()
         self._update_buttons()
 
     def save(self) -> None:
@@ -371,8 +415,10 @@ class FlowsPage(Page):
     def _refresh(self, keep: list[int] | None = None) -> None:
         problems = self.doc.problems()
         self.steps_view.set_steps(self.doc.steps, self.doc.depths(), problems, self.doc.hidden_rows(), keep)
+        if self.views.currentWidget() is self.chart:
+            self.chart.set_steps(self.doc.steps, problems, self.steps_view.selected_rows())
         has_steps = bool(self.doc.steps)
-        self.steps_view.setVisible(has_steps)
+        self.views.setVisible(has_steps)
         self.empty.setVisible(not has_steps and self.flow is not None)
         n = len(problems)
         self.banner.setText(f"⚠ {n} step(s) need attention (shown in red)." if n else "")
@@ -382,8 +428,25 @@ class FlowsPage(Page):
     def _selected(self) -> list[int]:
         return self.steps_view.selected_rows()
 
+    def _show_chart(self, show: bool) -> None:
+        self.views.setCurrentWidget(self.chart if show else self.steps_view)
+        if show:
+            self.chart.set_steps(self.doc.steps, self.doc.problems(), self._selected())
+            self.chart.run_marks = dict(self.steps_view.run_marks)
+            QTimer.singleShot(0, self.chart.fit)
+
+    def _chart_clicked(self, index: int, add: bool) -> None:
+        item = self.steps_view.item(index)
+        if item is None:
+            return
+        if not add:
+            self.steps_view.clearSelection()
+        item.setSelected(True)
+        self.steps_view.setCurrentItem(item)
+
     def _selection_changed(self) -> None:
         rows = self._selected()
+        self.chart.set_selection(rows)
         if len(rows) == 1:
             idx = rows[0]
             self.form.set_context(self.doc.labels(), self._account_vars + self.doc.defined_variables())
@@ -490,6 +553,84 @@ class FlowsPage(Page):
         self._refresh(keep=[row])
         info(self, "Variable created", f"The step now types {{{{account.{key}}}}}.\n"
              f"Fill in “{key}” for each account on the Accounts page (Edit / variables).")
+
+    # ================================================================== AI builder
+    def ai_build(self) -> None:
+        if self.flow is None:
+            info(self, "Choose a flow", "Create or select a flow first.")
+            return
+        rows = self._selected()
+        dlg = AiBuilderDialog(self.app, self.doc.steps, [v.removeprefix("account.") for v in self._account_vars
+                                                         if v.startswith("account.")], bool(rows), self)
+        if not dlg.exec() or not dlg.steps():
+            return
+        new = dlg.steps()
+        if dlg.replace_all:
+            self.doc._snapshot()  # noqa: SLF001 - one undo entry for the whole replacement
+            self.doc.steps = list(new)
+            self.doc._changed()  # noqa: SLF001
+            self._refresh(keep=[0])
+        else:
+            at = (max(rows) + 1) if rows else len(self.doc.steps)
+            added = self.doc.insert_steps(at, new)
+            self._refresh(keep=[added[0]])
+        self.log.appendPlainText(f"AI added {len(new)} step(s). Check the red ones and use Pick where needed. "
+                                 "Ctrl+Z undoes it.")
+
+    # ================================================================== self-healing
+    def _refresh_heals(self) -> None:
+        pending = self.app.repos.heals.pending(self.flow.id) if self.flow is not None else []
+        if pending:
+            self.heal_label.setText(f"🩺 {len(pending)} step(s) lost their element in a run and FlowPilot found it "
+                                    "again (self-healing). Review to save the new selectors.")
+            self.heal_label.setStyleSheet(f"color: {pal().warning};")
+        self.heal_bar.setVisible(bool(pending))
+
+    def _test_healed(self, step: StepBase, result: Any) -> None:
+        """A selector healed during a test run in the editor: offer it right away."""
+        from flowpilot.core.healing import heal_payload
+        from flowpilot.storage.models import SelectorHeal
+
+        if self.flow is None:
+            return
+        self.app.repos.heals.add(SelectorHeal(
+            flow_id=self.flow.id, step_id=step.id, step_summary=step.summary()[:300], old_selector=step.selector,
+            new_selector=result.selector, payload_json=heal_payload(result), score=result.score,
+            account_name="test profile"))
+        self._refresh_heals()
+
+    def review_heals(self) -> None:
+        from flowpilot.core.healing import apply_heal
+
+        if self.flow is None:
+            return
+        pending = self.app.repos.heals.pending(self.flow.id)
+        if not pending:
+            self._refresh_heals()
+            return
+        dlg = HealDialog(pending, self)
+        if not dlg.exec():
+            return
+        accepted = [h for h in pending if h.id in dlg.accepted_ids]
+        applied, missing = 0, 0
+        if accepted:
+            self.doc._snapshot()  # noqa: SLF001 - one undo entry
+            for h in accepted:
+                idx = self.doc.index_of(h.step_id)
+                if idx < 0:
+                    missing += 1
+                    continue
+                payload = json.loads(h.payload_json or "{}")
+                self.doc.steps[idx] = apply_heal(self.doc.steps[idx], h.new_selector, payload.get("fallbacks", []),
+                                                 payload.get("fp") or None)
+                applied += 1
+            self.doc._changed()  # noqa: SLF001
+        self.app.repos.heals.set_status([h.id for h in accepted], "applied")
+        self.app.repos.heals.set_status(dlg.dismissed_ids, "dismissed")
+        self._refresh_heals()
+        if applied or missing:
+            self.log.appendPlainText(f"Saved {applied} healed selector(s)" +
+                                     (f"; {missing} step(s) no longer exist." if missing else "."))
 
     # ================================================================== test profile
     def _reload_profiles(self) -> None:
@@ -622,14 +763,14 @@ class FlowsPage(Page):
                 if not result:
                     self.log.appendPlainText("Pick cancelled.")
                     return
-                selector, fallbacks, element_desc = result
+                selector = result.selector
                 idx = self.doc.index_of(step_id)
                 if idx < 0:
                     return
                 update: dict[str, Any] = {field: selector}
                 if field == "selector":
-                    update["fallbacks"] = fallbacks
-                    update["element_desc"] = element_desc
+                    update.update(fallbacks=result.fallbacks, element_desc=result.element_desc,
+                                  element_fp=result.element_fp)
                 self.doc.update(idx, self.doc.steps[idx].model_copy(update=update))
                 self._refresh(keep=[idx])
                 self.log.appendPlainText(f"Picked: {selector}")
@@ -647,13 +788,17 @@ class FlowsPage(Page):
     def _on_test_event(self, e: StepEvent) -> None:
         if e.status in ("running", "retry"):
             self.steps_view.mark(e.index, "running")
+            self.chart.mark(e.index, "running")
         elif e.status == "ok":
             self.steps_view.mark(e.index, "ok")
+            self.chart.mark(e.index, "ok")
         elif e.status == "failed":
             self.steps_view.mark(e.index, "failed")
+            self.chart.mark(e.index, "failed")
             self.log.appendPlainText(f"✖ Step {e.index + 1}: {e.error}")
         elif e.status == "skipped":
             self.steps_view.mark(e.index, "")
+            self.chart.mark(e.index, "")
 
     def _run(self, start: int, stop_at: int | None, steps: list[StepBase] | None = None) -> None:
         if self._running:
@@ -668,6 +813,7 @@ class FlowsPage(Page):
         def go() -> None:
             self._running = True
             self.steps_view.clear_marks()
+            self.chart.clear_marks()
             self._update_buttons()
             self.log.appendPlainText(f"▶ Running step {start + 1}" + (f" to {stop_at + 1}" if stop_at is not None
                                                                       else " to the end") + "…")
@@ -685,7 +831,8 @@ class FlowsPage(Page):
 
                 self.log.appendPlainText("■ Stopped." if isinstance(exc, StopRequested) else f"✖ {friendly_error(exc)}")
 
-            run_async(self.app.debug.run(steps, start, stop_at, self._on_test_event, self._log_line), done, failed)
+            run_async(self.app.debug.run(steps, start, stop_at, self._on_test_event, self._log_line,
+                                         heal_cb=self._test_healed), done, failed)
 
         self._with_profile(go)
 
@@ -720,6 +867,7 @@ class FlowsPage(Page):
         has_flow = self.flow is not None
         rows = self._selected()
         self.add_btn.setEnabled(has_flow and not self._running)
+        self.ai_btn.setEnabled(has_flow and not self._running)
         self.record_btn.setEnabled(has_flow and not self._running)
         for b in (self.run_all_btn, self.run_here_btn):
             b.setEnabled(has_flow and bool(self.doc.steps) and not self._running)

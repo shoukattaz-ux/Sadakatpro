@@ -181,6 +181,91 @@ def test_settings_and_scheduler_pages(ui, qapp):
     from flowpilot.ui.pages.settings_page import SettingsPage
 
     page = SettingsPage(ui)
-    assert page.tabs.count() == 7
+    assert page.tabs.count() == 8
     sp = SchedulerPage(ui)
     sp.reload()
+
+
+def test_flowchart_toggle_and_click(ui, qapp):
+    from flowpilot.ui.pages.flows_page import FlowsPage
+
+    page = FlowsPage(ui)
+    page.reload_flows()
+    page.chart_btn.setChecked(True)
+    qapp.processEvents()
+    assert page.views.currentWidget() is page.chart
+    assert len(page.chart._items) == 4  # Else is drawn as the branch split
+    page._chart_clicked(4, False)
+    assert page._selected() == [4] and 4 in page.chart.selected
+    page.add_step("wait")  # chart refreshes with the document
+    assert len(page.chart._items) == 5
+    page.list_btn.setChecked(True)
+    assert page.views.currentWidget() is page.steps_view
+
+
+def test_ai_dialog_offline_and_insert(ui, qapp, monkeypatch):
+    from flowpilot.services.ai_builder import draft_offline
+    from flowpilot.ui.dialogs import ai_dialog
+    from flowpilot.ui.pages import flows_page
+    from flowpilot.ui.pages.flows_page import FlowsPage
+
+    page = FlowsPage(ui)
+    page.reload_flows()
+    before = len(page.doc.steps)
+    dlg = ai_dialog.AiBuilderDialog(ui, page.doc.steps, ["email"], False)
+    dlg.show_draft(draft_offline("open example.com, log in, take a screenshot"))
+    assert dlg.add_btn.isEnabled() and dlg.preview.count() == 6
+
+    class Auto(ai_dialog.AiBuilderDialog):
+        def exec(self):  # noqa: A003
+            self.show_draft(draft_offline("wait 2 seconds, then close the browser"))
+            return True
+
+    monkeypatch.setattr(flows_page, "AiBuilderDialog", Auto)
+    page.ai_build()
+    # inserted right after the selected first step
+    assert len(page.doc.steps) == before + 2
+    assert [s.type for s in page.doc.steps[1:3]] == ["wait", "close_browser"]
+    page.undo()
+    assert len(page.doc.steps) == before
+
+
+def test_heal_review_applies_to_flow(ui, qapp, monkeypatch):
+    import json as _json
+
+    from flowpilot.storage.models import SelectorHeal
+    from flowpilot.ui.pages import flows_page
+    from flowpilot.ui.pages.flows_page import FlowsPage
+
+    page = FlowsPage(ui)
+    page.reload_flows()
+    step = page.doc.steps[1]  # if_element "#a"
+    ui.repos.heals.add(SelectorHeal(flow_id=page.flow.id, step_id=step.id, step_summary="x", old_selector="#a",
+                                    new_selector="#b", payload_json=_json.dumps({"fallbacks": ["xpath=//b"]}), score=9))
+    ui.repos.heals.add(SelectorHeal(flow_id=page.flow.id, step_id=step.id, step_summary="x", old_selector="#a",
+                                    new_selector="#b", payload_json="{}", score=8))
+    page._refresh_heals()
+    assert page.heal_bar.isVisibleTo(page) and len(ui.repos.heals.pending(page.flow.id)) == 1
+
+    class Accept(flows_page.HealDialog):
+        def exec(self):  # noqa: A003
+            self._save()
+            return True
+
+    monkeypatch.setattr(flows_page, "HealDialog", Accept)
+    page.review_heals()
+    healed = page.doc.steps[1]
+    assert healed.selector == "#b" and healed.fallbacks == ["xpath=//b", "#a"]
+    assert not ui.repos.heals.pending(page.flow.id) and not page.heal_bar.isVisibleTo(page)
+
+
+def test_update_banner(ui, qapp):
+    from flowpilot.services.updater import UpdateInfo
+    from flowpilot.ui.dialogs.update_dialog import UpdateBanner, UpdateDialog
+
+    info = UpdateInfo("9.0.0", "## New\n- things", "2026-10-12", "https://example.com", "", "", 0, "")
+    banner = UpdateBanner()
+    banner.show_for(info)
+    assert "9.0.0" in banner.text.text()
+    dlg = UpdateDialog(ui, info)
+    assert not dlg.install_btn.isEnabled()  # no installer asset yet
