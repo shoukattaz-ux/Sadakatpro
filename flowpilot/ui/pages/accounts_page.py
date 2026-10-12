@@ -284,7 +284,7 @@ class AccountsPage(Page):
         tcard.body.addWidget(self.table, 1)
 
         brow = QHBoxLayout()
-        for text, icon, slot in (("Edit / variables", "edit", lambda: self.edit(self._first_selected())),
+        for text, icon, slot in (("Edit / variables", "edit", self.edit_selected),
                                  ("Move to group", "folder", self._move_menu),
                                  ("Enable", "check", lambda: self._set_enabled(True)),
                                  ("Disable", "x", lambda: self._set_enabled(False)),
@@ -360,10 +360,16 @@ class AccountsPage(Page):
         self.proxy.group = current if isinstance(current, int) else ALL
 
     def _apply_filter(self) -> None:
+        modern = hasattr(self.proxy, "beginFilterChange")  # Qt >= 6.10; invalidateFilter() is deprecated there
+        if modern:
+            self.proxy.beginFilterChange()
         self.proxy.text = self.search.text()
         self.proxy.status = self.status_box.currentData() or ""
         self.proxy.tag = self.tag_box.currentData() or ""
-        self.proxy.invalidateFilter()
+        if modern:
+            self.proxy.endFilterChange()
+        else:
+            self.proxy.invalidateFilter()
         shown, total = self.proxy.rowCount(), len(self.model.accounts)
         self.count_label.setText(f"{shown} of {total} account(s)")
         self.empty.setVisible(total == 0)
@@ -401,6 +407,13 @@ class AccountsPage(Page):
             return
         if AccountDialog(self.app, account, self).exec():
             self.reload()
+
+    def edit_selected(self) -> None:
+        account = self._first_selected()
+        if account is None:
+            info(self, "Edit account", "Select an account in the list first (or double-click it).")
+            return
+        self.edit(account)
 
     def sync(self) -> None:
         conn = self.app.repos.connections.get(self.conn_box.currentData())
@@ -463,7 +476,7 @@ class AccountsPage(Page):
 
     def _table_menu(self, pos: Any) -> None:
         menu = QMenu(self)
-        menu.addAction("Edit / variables").triggered.connect(lambda: self.edit(self._first_selected()))
+        menu.addAction("Edit / variables").triggered.connect(self.edit_selected)
         menu.addAction("Move to group…").triggered.connect(self._move_menu)
         menu.addAction("Enable").triggered.connect(lambda: self._set_enabled(True))
         menu.addAction("Disable").triggered.connect(lambda: self._set_enabled(False))

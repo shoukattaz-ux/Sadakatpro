@@ -17,7 +17,73 @@ def setup_logging(log_dir) -> None:  # noqa: ANN001
                encoding="utf-8", enqueue=False, backtrace=False, diagnose=False)
 
 
+def smoke_test() -> int:
+    """Build the whole UI against a throw-away data folder and exit (checks a packaged build)."""
+    import tempfile
+    from pathlib import Path
+
+    from PySide6.QtWidgets import QApplication
+
+    from flowpilot.services.container import Services
+
+    app = QApplication.instance() or QApplication(sys.argv)
+    services = Services.create(Path(tempfile.mkdtemp(prefix="flowpilot-smoke-")))
+    services.settings.settings.setup_completed = True
+    from flowpilot.core.recorder import RECORDER_JS
+    from flowpilot.ui.app_context import AppContext
+    from flowpilot.ui.main_window import MainWindow
+    from flowpilot.ui.theme.palette import ThemeManager
+
+    ThemeManager.instance().apply("light")
+    window = MainWindow(AppContext.create(services))
+    window.show()
+    for i in range(len(window.pages)):
+        window.show_page(i)
+        app.processEvents()
+    message = f"FlowPilot smoke test OK ({len(window.pages)} pages, recorder script {len(RECORDER_JS)} bytes)"
+    if "--with-browser" in sys.argv:
+        message += "; " + asyncio.run(_browser_check(services))
+    services.db.dispose()
+    print(message)
+    return 0
+
+
+async def _browser_check(services) -> str:  # noqa: ANN001
+    """Run a two-step flow on a local Chrome/Edge profile through the real engine."""
+    import json
+
+    from flowpilot.core.engine import RunOptions, TargetSpec
+    from flowpilot.core.steps import dump_steps, new_step
+    from flowpilot.storage.models import Account, Connection
+
+    repos = services.repos
+    conn = repos.connections.save(Connection(type="local", name="Local", extra_json=json.dumps(
+        {"headless": "1", "profiles_dir": str(services.paths.root / "smoke-profiles")})))
+    repos.accounts.save(Account(name="smoke", connection_id=conn.id, remote_profile_id="smoke"))
+    steps = [new_step("open_url", url="data:text/html,<h1>FlowPilot</h1>"),
+             new_step("extract", selector="h1", variable="title"), new_step("close_browser")]
+    flow = repos.flows.create("smoke", json.dumps(dump_steps(steps)))
+    services.settings.settings.resource_guard = False
+    run_id = await services.engine.start(flow, TargetSpec(), RunOptions(launch_delay_min=0, launch_delay_max=0))
+    while run_id in services.engine.runs:
+        await asyncio.sleep(0.2)
+    item = repos.runs.items(run_id)[0]
+    await services.engine.shutdown()
+    await services.adapters.aclose()
+    if item.status != "done":
+        raise SystemExit(f"Browser check failed: {item.error}")
+    return f"browser check OK ({json.loads(item.results_json)['vars']['title']})"
+
+
 def main() -> int:
+    if "--smoke-test" in sys.argv:
+        return smoke_test()
+    if "--version" in sys.argv:
+        from flowpilot import __version__
+
+        print(__version__)
+        return 0
+
     from PySide6.QtWidgets import QApplication
     import qasync
 

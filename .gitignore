@@ -10,3 +10,5 @@ screenshots/
 traces/
 exports/
 *.db
+*.spec.bak
+flowpilot-smoke-*/
