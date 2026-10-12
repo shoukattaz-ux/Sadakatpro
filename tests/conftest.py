@@ -23,11 +23,14 @@ def data_dir(tmp_path, monkeypatch) -> Path:
 
 
 @pytest.fixture()
-def services(data_dir):
+async def services(data_dir):
     from flowpilot.services.container import Services
 
     svc = Services.create(data_dir)
     yield svc
+    # stop the Playwright driver and local browsers inside the test's event loop
+    await svc.engine.shutdown()
+    await svc.adapters.aclose()
     svc.db.dispose()
 
 

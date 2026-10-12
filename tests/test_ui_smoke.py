@@ -21,6 +21,18 @@ def qapp():
 
     ThemeManager.instance().apply("light")
     yield app
+    # Destroy every widget while the QApplication still exists: PySide crashes at interpreter
+    # shutdown if Python-owned widgets outlive it.
+    import gc
+
+    from PySide6.QtCore import QCoreApplication, QEvent
+
+    for w in QApplication.topLevelWidgets():
+        w.close()
+        w.deleteLater()
+    QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+    app.processEvents()
+    gc.collect()
 
 
 @pytest.fixture()
