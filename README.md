@@ -188,10 +188,8 @@ Logs are in the data folder (`%APPDATA%\FlowPilot\logs`), reachable via *Setting
 
 1. Change the code, bump `__version__` in `flowpilot/__init__.py` (e.g. `0.3.0`) and add a `## [0.3.0]`
    section to `CHANGELOG.md` (it becomes the release notes).
-2. Commit, then push a tag with the same version:
-   ```bash
-   git tag v0.3.0 && git push origin v0.3.0
-   ```
+2. Commit and push, then on GitHub open **Actions → Release → Run workflow** (or push a tag:
+   `git tag v0.3.0 && git push origin v0.3.0`).
 3. GitHub Actions (`.github/workflows/release.yml`) runs all tests on Windows, builds `FlowPilot.exe`,
    self-checks it with a real browser, builds `FlowPilot-Setup.exe` with Inno Setup and publishes a GitHub
    Release with the installer, its SHA-256 checksum and a portable zip.
