@@ -222,3 +222,45 @@ def test_flow_snapshot(services):
     r.save(flow, snapshot=False)
     assert r.snapshot(flow.id)
     assert [v.steps_json for v in r.versions(flow.id)] == ['[{"type": "wait"}]', "[]"]
+
+
+async def test_sync_brings_back_deleted_and_reconnects_orphans(services):
+    from flowpilot.adapters.base import RemoteProfile
+    from flowpilot.services.profile_sync import sync_profiles
+    from flowpilot.storage.models import Connection
+
+    class Fake:
+        async def list_profiles(self):
+            return [RemoteProfile(id="a", name="A"), RemoteProfile(id="b", name="B")]
+
+    repos = services.repos
+    conn = repos.connections.save(Connection(type="stealth", name="stealth", base_url="http://x"))
+    assert (await sync_profiles(repos, Fake(), conn)).created == 2
+    a = next(x for x in repos.accounts.list() if x.remote_profile_id == "a")
+    repos.accounts.delete([a.id])  # deleted in FlowPilot, still in the browser
+    res = await sync_profiles(repos, Fake(), conn)
+    assert res.created == 1 and len(repos.accounts.list()) == 2  # it is back
+    # the connection is deleted and added again: its accounts are reconnected, not duplicated
+    b = next(x for x in repos.accounts.list() if x.remote_profile_id == "b")
+    repos.accounts.save(b, variables={"password": "pw"})
+    repos.connections.delete(conn.id)
+    assert all(x.connection_id is None for x in repos.accounts.list())
+    conn2 = repos.connections.save(Connection(type="stealth", name="stealth", base_url="http://x"))
+    res = await sync_profiles(repos, Fake(), conn2)
+    assert (res.created, res.relinked) == (0, 2)
+    accs = repos.accounts.list()
+    assert len(accs) == 2 and all(x.connection_id == conn2.id for x in accs)
+    assert repos.accounts.variables(next(x for x in accs if x.remote_profile_id == "b")) == {"password": "pw"}
+
+
+async def test_local_refuses_chrome_user_data_folder(tmp_path):
+    from flowpilot.adapters import AdapterError, create_adapter
+
+    user_data = tmp_path / "User Data"
+    for d in ("Default", "Crashpad", "BrowserMetrics"):
+        (user_data / d).mkdir(parents=True)
+    (user_data / "Local State").write_text("{}")
+    a = create_adapter("local", "", "", {"profiles_dir": str(user_data)})
+    with pytest.raises(AdapterError, match="Chrome's own data folder"):
+        await a.list_profiles()
+    assert not (await a.test_connection()).ok

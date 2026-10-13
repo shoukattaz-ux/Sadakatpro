@@ -13,6 +13,7 @@ from typing import Any
 from loguru import logger
 
 from flowpilot.adapters.base import AdapterError, BrowserAdapter
+from flowpilot.adapters.stealth import FIREFOX_PREFIX
 
 PlaywrightGetter = Callable[[], Any]
 
@@ -68,9 +69,14 @@ class BrowserSession:
         self.started = True
         pw = await self._pw.get()
         last_exc: Exception | None = None
+        firefox = endpoint.startswith(FIREFOX_PREFIX)  # e.g. Stealth Browser's Camoufox profiles
         for _ in range(3):  # the browser can take a moment before accepting CDP connections
             try:
-                self.browser = await pw.chromium.connect_over_cdp(endpoint, timeout=connect_timeout_s * 1000)
+                if firefox:
+                    self.browser = await pw.firefox.connect(endpoint[len(FIREFOX_PREFIX):],
+                                                            timeout=connect_timeout_s * 1000)
+                else:
+                    self.browser = await pw.chromium.connect_over_cdp(endpoint, timeout=connect_timeout_s * 1000)
                 break
             except Exception as exc:
                 last_exc = exc

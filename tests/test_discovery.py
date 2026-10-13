@@ -9,6 +9,7 @@ import httpx
 import pytest
 
 from flowpilot.adapters import AdapterError, create_adapter
+from flowpilot.adapters.auto import DETECT_VERSION
 from flowpilot.adapters.discovery import api_failure, discover, find_cdp, find_list
 
 KEY = "hy3sobPeT6FVq4zSGk5H8MpkDnUmdOc"
@@ -162,7 +163,7 @@ async def test_auto_adapter_end_to_end(make):
     assert endpoint in ("http://127.0.0.1:51234", "ws://127.0.0.1:9333/devtools/browser/x", "http://127.0.0.1:40123")
     await adapter.stop_profile(profiles[0].id)
     saved = adapter.detected_settings()
-    assert saved["detected"] == "2" and saved["ws_path"] == "auto"
+    assert saved["detected"] == DETECT_VERSION and saved["ws_path"] == "auto"
     # a new adapter built from the saved settings works without detecting again
     again = create_adapter("auto", "http://127.0.0.1:9378", KEY, saved)
     assert again.is_detected
@@ -238,7 +239,7 @@ async def test_old_or_wrong_saved_endpoints_are_found_again(tmp_path):
     db = Database(tmp_path / "db.sqlite")
     repos = Repositories(db, SecretBox(tmp_path, use_dpapi=False))
     conn = repos.connections.save(Connection(type="auto", name="Stealth", base_url="http://127.0.0.1:9378",
-                                             extra_json=json.dumps({**wrong, "detected": "2"})), api_key=KEY)
+                                             extra_json=json.dumps({**wrong, "detected": DETECT_VERSION})), api_key=KEY)
     pool = AdapterPool(repos.connections)
     adapter = pool.get(conn)
     assert adapter.is_detected

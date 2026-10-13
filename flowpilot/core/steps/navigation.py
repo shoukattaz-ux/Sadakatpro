@@ -176,6 +176,11 @@ class CloseTabStep(StepBase):
 
     async def run(self, ctx: StepContext) -> None:
         page = ctx.require_page()
+        open_pages = [p for p in ctx.browser_context.pages if not p.is_closed()]
+        if len(open_pages) <= 1:
+            # closing the last tab would close the whole browser profile: leave an empty tab instead
+            await page.goto("about:blank")
+            return
         await page.close()
         pages = [p for p in ctx.browser_context.pages if not p.is_closed()]
         ctx.page = pages[-1] if pages else None

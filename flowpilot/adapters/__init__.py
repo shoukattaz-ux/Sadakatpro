@@ -13,6 +13,7 @@ from flowpilot.adapters.gologin import GoLoginAdapter
 from flowpilot.adapters.local import LocalChromeAdapter
 from flowpilot.adapters.multilogin import MultiloginAdapter
 from flowpilot.adapters.octo import OctoAdapter
+from flowpilot.adapters.stealth import StealthAdapter
 
 #: connection ``type`` value -> adapter class
 ADAPTERS: dict[str, Any] = {
@@ -21,6 +22,7 @@ ADAPTERS: dict[str, Any] = {
     "dolphin": DolphinAdapter,
     "multilogin": MultiloginAdapter,
     "octo": OctoAdapter,
+    "stealth": StealthAdapter,
     "auto": AutoDetectAdapter,
     "custom": CustomAdapter,
     "local": LocalChromeAdapter,

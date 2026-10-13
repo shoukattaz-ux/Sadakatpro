@@ -2,6 +2,30 @@
 
 All notable changes to FlowPilot are listed here.
 
+## [0.2.5] — 2026-10-13
+
+### New
+- **Stealth Browser** connection type, built on Stealth Browser's automation API: profiles are opened with
+  `{"automation": true}` and FlowPilot attaches with the endpoints of that start (they change every time).
+  Handles a locked app (waits for the access code), a profile opened by hand (closes and re-opens it for
+  automation), an already running automation session (attaches to it), long first starts (engine
+  download), and Firefox (Camoufox) profiles via `firefox.connect`. Existing “Any browser (auto-detect)”
+  connections to Stealth Browser switch to this by themselves — nothing to set up again.
+- **Accounts → browser list** now filters the table: choose a browser to see only its profiles, *All
+  browsers* to see everything, or *No browser* for accounts whose connection was deleted. *Sync profiles*
+  loads the chosen browser (or every browser for *All browsers*). Group counts follow the choice.
+
+### Fixed
+- Error “profile is open … but it was started without a debugging port” with Stealth Browser: the profile was
+  started without asking for automation.
+- *Sync profiles* reconnects accounts whose browser connection was deleted and added again (keeping their
+  passwords, variables and groups) instead of creating duplicates. Profiles deleted in FlowPilot but still in
+  the browser come back on the next sync.
+- Deleting a connection asks whether to delete its accounts as well.
+- *Local Chrome* no longer imports Chrome's internal folders (Crashpad, BrowserMetrics, …) as profiles when
+  its folder is set to Chrome's own “User Data” folder; it explains how to fix the setting instead.
+- *Close tab* on the last open tab leaves an empty tab instead of closing the whole browser profile.
+
 ## [0.2.4] — 2026-10-13
 
 ### Fixed

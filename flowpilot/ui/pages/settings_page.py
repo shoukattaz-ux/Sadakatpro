@@ -17,6 +17,7 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QLineEdit,
+    QMessageBox,
     QScrollArea,
     QTabWidget,
     QVBoxLayout,
@@ -208,11 +209,30 @@ class SettingsPage(Page):
             self._refresh_connections()
 
     def _delete(self, conn: Any) -> None:
-        if confirm(self, "Delete connection", f"Delete “{conn.name}”? Accounts using it will need a new connection.",
-                   "Delete", danger=True):
-            self.app.repos.connections.delete(conn.id)
-            self.app.bridge.data_changed.emit("connections")
-            self._refresh_connections()
+        own = [a.id for a in self.app.repos.accounts.list() if a.connection_id == conn.id]
+        if not own:
+            if not confirm(self, "Delete connection", f"Delete “{conn.name}”?", "Delete", danger=True):
+                return
+        else:
+            box = QMessageBox(self)
+            box.setIcon(QMessageBox.Icon.Warning)
+            box.setWindowTitle("Delete connection")
+            box.setText(f"Delete “{conn.name}”? It has {len(own)} account(s).")
+            box.setInformativeText("Deleting the accounts too keeps your list clean (their profiles stay in the "
+                                   "browser; Sync profiles brings them back). Kept accounts show under "
+                                   "“No browser” and are reconnected when you add the browser again and sync.")
+            both = box.addButton(f"Delete with {len(own)} account(s)", QMessageBox.ButtonRole.DestructiveRole)
+            keep = box.addButton("Delete, keep accounts", QMessageBox.ButtonRole.AcceptRole)
+            box.addButton("Cancel", QMessageBox.ButtonRole.RejectRole)
+            box.exec()
+            if box.clickedButton() not in (both, keep):
+                return
+            if box.clickedButton() is both:
+                self.app.repos.accounts.delete(own)
+                self.app.bridge.data_changed.emit("accounts")
+        self.app.repos.connections.delete(conn.id)
+        self.app.bridge.data_changed.emit("connections")
+        self._refresh_connections()
 
     def _test(self, conn: Any, label: QLabel) -> None:
         label.setProperty("role", "muted")

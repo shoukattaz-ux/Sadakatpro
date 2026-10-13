@@ -79,11 +79,21 @@ class LocalChromeAdapter:
     async def test_connection(self) -> ConnectionResult:
         try:
             exe = self._executable()
+            profiles = await self.list_profiles()
         except AdapterError as exc:
             return ConnectionResult(False, str(exc))
-        return ConnectionResult(True, f"Browser found: {exe}. {len(await self.list_profiles())} profile(s).")
+        return ConnectionResult(True, f"Browser found: {exe}. {len(profiles)} profile(s).")
+
+    def _check_folder(self) -> None:
+        if (self.profiles_dir / "Local State").exists():
+            raise AdapterError(
+                f"“{self.profiles_dir}” is Chrome's own data folder (its sub-folders such as Crashpad are not "
+                "profiles, and Chrome does not allow automation of this folder). In Settings → Connections, edit "
+                "this connection and leave “Profiles folder” empty (FlowPilot then keeps its own profiles) or "
+                "choose an empty folder.")
 
     async def list_profiles(self) -> list[RemoteProfile]:
+        self._check_folder()
         self.profiles_dir.mkdir(parents=True, exist_ok=True)
         if not any(self.profiles_dir.iterdir()):
             for i in range(1, 4):
@@ -93,6 +103,7 @@ class LocalChromeAdapter:
     async def start_profile(self, profile_id: str) -> str:
         if profile_id in self._procs and self._procs[profile_id].poll() is None:
             raise AdapterError(f"Profile '{profile_id}' is already open.")
+        self._check_folder()
         port = _free_port()
         user_dir = self.profiles_dir / profile_id
         user_dir.mkdir(parents=True, exist_ok=True)

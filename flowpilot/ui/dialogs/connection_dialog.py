@@ -29,6 +29,8 @@ TYPE_HELP = {
     "dolphin": "Keep Dolphin Anty open. The API token is in your Dolphin profile → API.",
     "multilogin": "Keep the Multilogin X agent running. Needs a token and the folder ID.",
     "octo": "Keep Octo Browser open. The API token is in Octo → Settings.",
+    "stealth": "Keep Stealth Browser open and unlocked. Settings → API Connection shows the API Base URL "
+               "(http://127.0.0.1:9378) and the API Key. Chrome and Firefox (Camoufox) profiles both work.",
     "auto": "For any other browser (or your own): enter only the API address and key shown in the browser's "
             "settings, then press Test connection — FlowPilot works out the rest automatically.",
     "custom": "For any other browser: fill in where the start/stop/list endpoints are, or press "

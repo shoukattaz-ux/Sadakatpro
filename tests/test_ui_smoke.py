@@ -381,3 +381,25 @@ def test_small_screens_fit(ui, qapp, size):
     qapp.processEvents()
     assert w.side.width() == 250 and page.run_all_btn.text() == "Test flow"
     w.close()
+
+
+def test_accounts_filter_by_browser(ui, qapp):
+    from flowpilot.ui.pages.accounts_page import ALL, NO_CONNECTION, AccountsPage
+
+    stealth = ui.repos.connections.save(Connection(type="stealth", name="stealth", base_url="http://s"))
+    ui.repos.accounts.save(Account(name="kok", connection_id=stealth.id, remote_profile_id="k"))
+    ui.repos.accounts.save(Account(name="orphan", remote_profile_id="o"))
+    page = AccountsPage(ui)
+    page.reload()
+    box = page.conn_box
+    assert [box.itemText(i) for i in range(box.count())] == ["All browsers", "Ads", "stealth", "No browser (1)"]
+    assert page.proxy.rowCount() == 5
+    box.setCurrentIndex(box.findData(stealth.id))
+    assert page.proxy.rowCount() == 1 and page.proxy.index(0, 1).data() == "kok"
+    assert page.groups.item(0).text().endswith("(1)")  # group counts follow the browser
+    box.setCurrentIndex(box.findData(NO_CONNECTION))
+    assert page.proxy.rowCount() == 1 and page.proxy.index(0, 1).data() == "orphan"
+    box.setCurrentIndex(box.findData(ALL))
+    assert page.proxy.rowCount() == 5
+    page.reload()  # the choice survives a reload
+    assert box.currentData() == ALL

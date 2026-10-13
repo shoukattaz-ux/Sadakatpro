@@ -29,6 +29,7 @@ from PySide6.QtWidgets import (
     QTableView,
 )
 
+from flowpilot.core.errors import friendly_error
 from flowpilot.services.profile_sync import sync_profiles
 from flowpilot.storage.models import Account
 from flowpilot.ui.app_context import AppContext
@@ -41,6 +42,7 @@ from flowpilot.ui.widgets.clay import ClayButton, ClayCard, ClayToggle, EmptySta
 
 MIME_ACCOUNTS = "application/x-flowpilot-accounts"
 ALL, NO_GROUP = -1, -2
+NO_CONNECTION = -3
 GROUP_COLORS = ["#7C6CF2", "#5EC8D8", "#6BCB8B", "#F5B75C", "#F27C7C", "#C08CF2", "#5E9CF2", "#F28CC0"]
 
 COLUMNS = ["", "Name", "Connection", "Profile ID", "Group", "Tags", "Last result", "Last run", "Notes"]
@@ -132,12 +134,23 @@ class AccountFilter(QSortFilterProxyModel):
         super().__init__()
         self.text = ""
         self.group: int = ALL
+        self.connection: int = ALL  # ALL / NO_CONNECTION / a connection id
         self.status = ""
         self.tag = ""
+        self.known_connections: set[int] = set()
+
+    def connection_matches(self, a: Any) -> bool:
+        if self.connection == ALL:
+            return True
+        if self.connection == NO_CONNECTION:
+            return a.connection_id is None or a.connection_id not in self.known_connections
+        return a.connection_id == self.connection
 
     def filterAcceptsRow(self, row: int, parent: QModelIndex | QPersistentModelIndex) -> bool:  # noqa: N802
         model: AccountsModel = self.sourceModel()  # type: ignore[assignment]
         a = model.accounts[row]
+        if not self.connection_matches(a):
+            return False
         if self.group == NO_GROUP and a.group_id is not None and a.group_id in model.group_names:
             return False
         if self.group >= 0 and a.group_id != self.group:
@@ -202,7 +215,9 @@ class AccountsPage(Page):
 
         # actions
         self.conn_box = QComboBox()
-        self.conn_box.setToolTip("Connection to sync profiles from")
+        self.conn_box.setToolTip("Show the profiles of one browser — Sync profiles loads that browser's profiles")
+        self.conn_box.setMinimumWidth(160)
+        self.conn_box.currentIndexChanged.connect(self._connection_changed)
         sync = ClayButton("Sync profiles", "refresh", "secondary", tooltip="Load profiles from the anti-detect browser")
         sync.clicked.connect(self.sync)
         add = ClayButton("Add", "plus", "primary")
@@ -311,8 +326,8 @@ class AccountsPage(Page):
     # ------------------------------------------------------------------ data
     def reload(self) -> None:
         self.model.reload()
-        self._reload_groups()
         self._reload_connections()
+        self._reload_groups()
         tags = sorted({t for a in self.model.accounts for t in a.tag_list}, key=str.lower)
         current = self.tag_box.currentData()
         self.tag_box.blockSignals(True)
@@ -326,20 +341,36 @@ class AccountsPage(Page):
 
     def _reload_connections(self) -> None:
         current = self.conn_box.currentData()
+        conns = self.app.repos.connections.list()
+        known = {c.id for c in conns}
+        self.proxy.known_connections = known
+        self.conn_box.blockSignals(True)
         self.conn_box.clear()
-        for c in self.app.repos.connections.list():
+        self.conn_box.addItem("All browsers", ALL)
+        for c in conns:
             self.conn_box.addItem(c.name, c.id)
-        if current is not None:
-            self.conn_box.setCurrentIndex(max(0, self.conn_box.findData(current)))
+        orphans = sum(1 for a in self.model.accounts if a.connection_id is None or a.connection_id not in known)
+        if orphans:
+            self.conn_box.addItem(f"No browser ({orphans})", NO_CONNECTION)
+        index = self.conn_box.findData(current) if current is not None else -1
+        self.conn_box.setCurrentIndex(index if index >= 0 else 0)
+        self.conn_box.blockSignals(False)
+        self.proxy.connection = self.conn_box.currentData()
+
+    def _connection_changed(self, *_: Any) -> None:
+        self.proxy.connection = self.conn_box.currentData() if self.conn_box.currentData() is not None else ALL
+        self._reload_groups()
+        self._apply_filter()
 
     def _reload_groups(self) -> None:
         current = self.groups.currentItem().data(Qt.ItemDataRole.UserRole) if self.groups.currentItem() else ALL
         counts: dict[int | None, int] = {}
-        for a in self.model.accounts:
+        shown = [a for a in self.model.accounts if self.proxy.connection_matches(a)]
+        for a in shown:
             counts[a.group_id] = counts.get(a.group_id, 0) + 1
         self.groups.blockSignals(True)
         self.groups.clear()
-        all_item = QListWidgetItem(f"All accounts  ({len(self.model.accounts)})")
+        all_item = QListWidgetItem(f"All accounts  ({len(shown)})")
         all_item.setData(Qt.ItemDataRole.UserRole, ALL)
         all_item.setFlags(all_item.flags() & ~Qt.ItemFlag.ItemIsDragEnabled)
         self.groups.addItem(all_item)
@@ -420,18 +451,41 @@ class AccountsPage(Page):
         self.edit(account)
 
     def sync(self) -> None:
-        conn = self.app.repos.connections.get(self.conn_box.currentData())
-        if conn is None:
-            info(self, "No connection", "Add a connection in Settings → Connections first.")
+        """Load profiles from the selected browser (or from every browser for "All browsers")."""
+        choice = self.conn_box.currentData()
+        conns = self.app.repos.connections.list()
+        if not conns:
+            info(self, "No connection", "Add your anti-detect browser in Settings → Connections first.")
             return
-        adapter = self.app.services.adapters.get(conn)
+        if choice == NO_CONNECTION:
+            info(self, "Sync profiles", "Choose a browser in the list first.")
+            return
+        targets = conns if choice in (None, ALL) else [c for c in conns if c.id == choice]
 
-        def done(res: Any) -> None:
+        async def go() -> list[tuple[str, Any, str]]:
+            out = []
+            for conn in targets:
+                try:
+                    res = await sync_profiles(self.app.repos, self.app.services.adapters.get(conn), conn)
+                    out.append((conn.name, res, ""))
+                except Exception as exc:
+                    out.append((conn.name, None, friendly_error(exc)))
+            return out
+
+        def done(results: list[tuple[str, Any, str]]) -> None:
             self.reload()
             self.app.bridge.data_changed.emit("groups")
-            info(self, "Profiles synced", f"{res.total} profile(s) found: {res.created} new, {res.updated} updated.")
+            self.app.bridge.data_changed.emit("accounts")
+            lines = []
+            for name, res, err in results:
+                if res is None:
+                    lines.append(f"✖ {name}: {err}")
+                else:
+                    extra = f", {res.relinked} reconnected" if res.relinked else ""
+                    lines.append(f"✔ {name}: {res.total} profile(s) — {res.created} new, {res.updated} updated{extra}")
+            info(self, "Profiles synced", "\n".join(lines))
 
-        run_async(sync_profiles(self.app.repos, adapter, conn), done, parent=self, error_title="Sync failed")
+        run_async(go(), done, parent=self, error_title="Sync failed")
 
     def import_file(self) -> None:
         if not self.app.repos.connections.list():

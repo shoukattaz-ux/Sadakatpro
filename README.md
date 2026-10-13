@@ -63,6 +63,7 @@ You can open the assistant again at any time with the **?** button at the bottom
 | Dolphin Anty | Keep Dolphin open. API token: your Dolphin profile → *API*. |
 | Multilogin X | Keep the Multilogin agent running. Needs a token and the **Folder ID** (extra settings). |
 | Octo Browser | Keep Octo open. API token: Octo → *Settings → Additional*. |
+| Stealth Browser | Keep Stealth Browser open and unlocked. *Settings → API Connection* shows the address (`http://127.0.0.1:9378`) and the API key. Chrome and Firefox (Camoufox) profiles both work. |
 | **Any browser (auto-detect)** | For any other browser, including your own: enter only the API address and key from the browser's settings and press **Test connection** — FlowPilot finds the rest. |
 | Custom | For any other browser (or your own): enter where the start/stop/list endpoints are and where the debugging address is in the answer (see *Custom connections* below). |
 
