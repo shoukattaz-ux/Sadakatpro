@@ -32,6 +32,7 @@ from flowpilot.services.reporting import apply_retention
 from flowpilot.ui.app_context import AppContext
 from flowpilot.ui.async_utils import confirm, info, run_async, show_error
 from flowpilot.ui.dialogs.connection_dialog import ConnectionDialog
+from flowpilot.ui.dialogs.transfer_dialog import ExportDialog, ImportDialog
 from flowpilot.ui.pages.base import Page
 from flowpilot.ui.theme.palette import ThemeManager
 from flowpilot.ui.widgets.clay import (
@@ -125,6 +126,14 @@ class SettingsPage(Page):
         super().__init__(app)
         self.tabs = QTabWidget()
         self.content.addWidget(self.tabs)
+        self._build_tabs()
+
+    def _build_tabs(self) -> None:
+        current = self.tabs.currentIndex()
+        while self.tabs.count():
+            page = self.tabs.widget(0)
+            self.tabs.removeTab(0)
+            page.deleteLater()
         self.tabs.addTab(self._connections_tab(), "Connections")
         self.tabs.addTab(_scroll(self._defaults_tab()), "Defaults")
         self.tabs.addTab(_scroll(self._behavior_tab()), "Behavior")
@@ -133,6 +142,8 @@ class SettingsPage(Page):
         self.tabs.addTab(_scroll(self._notifications_tab()), "Notifications")
         self.tabs.addTab(_scroll(self._ai_tab()), "AI")
         self.tabs.addTab(_scroll(self._about_tab()), "About")
+        if current >= 0:
+            self.tabs.setCurrentIndex(current)
 
     # ------------------------------------------------------------------ connections
     def _connections_tab(self) -> QWidget:
@@ -226,6 +237,8 @@ class SettingsPage(Page):
     def on_data_changed(self, what: str) -> None:
         if what == "connections":
             self._refresh_connections()
+        elif what == "imported":  # every setting may have changed: rebuild the forms
+            self._build_tabs()
 
     # ------------------------------------------------------------------ defaults
     def _defaults_tab(self) -> QWidget:
@@ -359,6 +372,20 @@ class SettingsPage(Page):
         s = self.app.settings
         paths = self.app.services.paths
         f = _Form(self.app)
+        f.section("Move to another PC", "Export everything — flows, accounts with their passwords, groups, "
+                  "connections with API keys, schedules and settings — into one password-protected file. "
+                  "Import that file on another PC and it all comes back.")
+        t = QWidget()
+        tl = QHBoxLayout(t)
+        tl.setContentsMargins(0, 0, 0, 0)
+        export_btn = ClayButton("Export all data…", "download", "primary", compact=True)
+        export_btn.clicked.connect(lambda: ExportDialog(self.app, self).exec())
+        import_btn = ClayButton("Import…", "upload", compact=True)
+        import_btn.clicked.connect(lambda: ImportDialog(self.app, self).exec())
+        tl.addWidget(export_btn)
+        tl.addWidget(import_btn)
+        tl.addStretch(1)
+        f.row("", t)
         f.section("Data folder", "Your database, screenshots, logs and exports are stored here.")
         folder = QLabel(str(paths.root))
         folder.setWordWrap(True)
@@ -374,7 +401,8 @@ class SettingsPage(Page):
         bl.addWidget(move_btn)
         bl.addStretch(1)
         f.row("", btns)
-        f.section("Backup", "One zip file with your flows, accounts, connections and settings.")
+        f.section("Backup", "A snapshot of this PC's data for undoing mistakes. To move to another PC, use "
+                  "Export instead (backups keep passwords locked to this Windows user).")
         b = QWidget()
         bl2 = QHBoxLayout(b)
         bl2.setContentsMargins(0, 0, 0, 0)

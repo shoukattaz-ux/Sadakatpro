@@ -2,6 +2,16 @@
 
 All notable changes to FlowPilot are listed here.
 
+## [0.2.2] — 2026-10-13
+
+### New
+- **Export / Import of all data** — *Settings → Data → Export all data…* saves every flow (with version
+  history), account (with passwords and variables), group, browser connection (with API key), schedule and
+  setting — optionally the run history too — into one password-protected `.flowpilot` file. On another PC,
+  *Import…* (or *Import from another PC…* in the setup assistant) brings everything back immediately, no
+  restart needed. Choose *Replace everything* for an exact copy or *Add to what is already here* to merge.
+  A safety backup is made before every import, and the import is all-or-nothing.
+
 ## [0.2.1] — 2026-10-13
 
 ### New

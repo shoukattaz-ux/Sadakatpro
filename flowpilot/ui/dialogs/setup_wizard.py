@@ -17,8 +17,9 @@ from flowpilot.ui.widgets.clay import ClayButton, muted_label
 
 
 class _Welcome(QWizardPage):
-    def __init__(self) -> None:
+    def __init__(self, wiz: SetupWizard) -> None:
         super().__init__()
+        self.wiz = wiz
         self.setTitle("Welcome to FlowPilot 👋")
         self.setSubTitle("Automate repetitive web tasks on many browser profiles — without writing code.")
         lay = QVBoxLayout(self)
@@ -27,7 +28,21 @@ class _Welcome(QWizardPage):
                      "3. Record what you do in the browser — FlowPilot turns it into steps.",
                      "4. Run it on as many profiles as you like, with human-like behaviour."):
             lay.addWidget(muted_label(line))
+        lay.addSpacing(16)
+        lay.addWidget(muted_label("Moving from another PC? Import the file you made there with "
+                                  "Settings → Data → Export all data, and everything comes back."))
+        imp = ClayButton("Import from another PC…", "upload", "secondary")
+        imp.clicked.connect(self._import)
+        lay.addWidget(imp)
         lay.addStretch(1)
+
+    def _import(self) -> None:
+        from flowpilot.ui.dialogs.transfer_dialog import ImportDialog
+
+        dialog = ImportDialog(self.wiz.app, self.wiz)
+        if dialog.exec() and dialog.imported:
+            self.wiz.imported = True
+            self.wiz.accept()
 
 
 class _ConnectionPage(QWizardPage):
@@ -163,10 +178,11 @@ class SetupWizard(QWizard):
         super().__init__(parent)
         self.app = app
         self.connection: Connection | None = None
+        self.imported = False
         self.setWindowTitle("FlowPilot setup")
         self.resize(640, 520)
         self.setWizardStyle(QWizard.WizardStyle.ModernStyle)
-        self.addPage(_Welcome())
+        self.addPage(_Welcome(self))
         self.addPage(_ConnectionPage(self))
         self.addPage(_SyncPage(self))
         self.addPage(_RecordPage())

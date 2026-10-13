@@ -281,3 +281,49 @@ def test_update_banner(ui, qapp):
     assert "9.0.0" in banner.text.text()
     dlg = UpdateDialog(ui, info)
     assert not dlg.install_btn.isEnabled()  # no installer asset yet
+
+
+def test_export_import_dialogs(ui, qapp, tmp_path, monkeypatch):
+    from PySide6.QtWidgets import QFileDialog
+
+    from flowpilot.ui.dialogs import transfer_dialog
+    from flowpilot.ui.dialogs.setup_wizard import SetupWizard
+    from flowpilot.ui.dialogs.transfer_dialog import ExportDialog, ImportDialog
+    from flowpilot.ui.pages.settings_page import SettingsPage
+
+    messages: list[str] = []
+    monkeypatch.setattr(transfer_dialog, "info", lambda _p, _t, text: messages.append(text))
+    target = tmp_path / "moved"
+    monkeypatch.setattr(QFileDialog, "getSaveFileName", lambda *a, **k: (str(target), ""))
+    page = SettingsPage(ui)
+    ui.settings.theme = "dark"
+    exp = ExportDialog(ui, page)
+    exp.pw1.setText("pw12345")
+    exp.pw2.setText("different")
+    exp._export()  # noqa: SLF001
+    assert "not the same" in exp.error.text() and exp.saved_path is None
+    exp.pw2.setText("pw12345")
+    exp._export()  # noqa: SLF001
+    assert exp.saved_path == tmp_path / "moved.flowpilot" and exp.saved_path.exists()
+
+    # wipe local data, then import it back through the dialog
+    for acc in ui.repos.accounts.list():
+        ui.repos.accounts.delete([acc.id])
+    ui.settings.theme = "light"
+    imp = ImportDialog(ui, page, exp.saved_path)
+    assert "3 account(s)" in imp.about.text()
+    imp.pw.setText("wrong-pw")
+    imp._import()  # noqa: SLF001
+    assert "Wrong password" in imp.error.text() and not imp.imported
+    imp.pw.setText("pw12345")
+    imp._import()  # noqa: SLF001
+    assert imp.imported and "3 account(s)" in messages[-1]
+    assert len(ui.repos.accounts.list()) == 3 and ui.settings.theme == "dark"
+    assert ui.repos.accounts.variables(ui.repos.accounts.list()[0])["email"].endswith("@x.y")
+    qapp.processEvents()
+    assert page.tabs.count() == 8  # rebuilt after the import
+    wiz = SetupWizard(ui)
+    assert wiz.imported is False
+    from flowpilot.ui.theme.palette import ThemeManager
+
+    ThemeManager.instance().apply("light")

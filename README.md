@@ -131,6 +131,21 @@ custom) · what to save on errors · new tabs and pop-up handling · theme (ligh
 text size · data folder, **backup & restore**, clean-up of old runs · desktop and **Telegram**
 notifications · version and license.
 
+### Move to another PC (Export / Import)
+**Settings → Data → Export all data…** saves *everything* — flows (with their version history), accounts
+with their passwords and variables, groups, browser connections with their API keys, schedules and all
+settings (optionally the run history too) — into **one `.flowpilot` file**, locked with a password you
+choose. On the other PC install FlowPilot, then either press **Import from another PC…** in the setup
+assistant or use **Settings → Data → Import…**, pick the file and type the password. Everything comes back
+straight away, no restart needed.
+
+* **Replace everything** makes the new PC an exact copy (recommended for a new PC).
+* **Add to what is already here** keeps the current data and settings and adds what is missing;
+  a flow with the same name but other steps is added as “… (imported)”.
+* A safety backup of the current data is always made first.
+* Passwords and API keys are re-encrypted for the new Windows user — that is why the file needs a password.
+  Without the password the file cannot be opened, and the password cannot be recovered.
+
 ---
 
 ## 4. Step reference
