@@ -22,6 +22,7 @@ from urllib.parse import unquote, urlparse
 import pytest
 
 from flowpilot.adapters import AdapterError, create_adapter
+from flowpilot.adapters.auto import DETECT_VERSION
 from flowpilot.adapters.stealth import FIREFOX_PREFIX, endpoint_from
 from flowpilot.core.engine import RunOptions, TargetSpec
 from flowpilot.core.steps import dump_steps, new_step
@@ -95,7 +96,7 @@ class FakeStealth(BaseHTTPRequestHandler):
         body = json.loads(self.rfile.read(length)) if length else None
         self.calls.append((method, path, body))
         if not path.startswith("/api/v1/"):
-            return self._err(404, "not_found", "Not found")
+            return self._internal(method, path)
         auth = self.headers.get("Authorization") == f"Bearer {KEY}" or self.headers.get("X-API-Key") == KEY
         if not auth:
             return self._err(401, "unauthorized", "Wrong API key")
@@ -103,8 +104,7 @@ class FakeStealth(BaseHTTPRequestHandler):
             return self._err(423, "locked", "Stealth Browser is locked: enter the code first")
         parts = [unquote(p) for p in path[len("/api/v1/"):].split("/")]
         if parts == ["status"]:
-            return self._ok({"version": "2.4.0", "playwright_version": "1.62.0",
-                             "engines": ["fingerprint-chromium", "camoufox"]})
+            return self._ok({"version": "2.4.0", "pw": "1.62.0", "browser_engines": ["fingerprint-chromium"]})
         if parts == ["profiles"] and method == "GET":
             return self._ok([{"id": k, "name": v, "engine": "fingerprint-chromium", "tags": ["us"], "notes": ""}
                              for k, v in self.profiles.items()])
@@ -134,6 +134,26 @@ class FakeStealth(BaseHTTPRequestHandler):
             return self._ok({"running": info is not None, "automation": info and info["automation"],
                              "last_error": None})
         return self._err(404, "not_found", "Not found")
+
+    def _internal(self, method: str, path: str) -> None:
+        """The app's own routes for its window (no /api/v1, no key): a start here opens the profile
+        for normal use and answers only the process id — what FlowPilot found by itself before."""
+        parts = [unquote(p) for p in path.strip("/").split("/")]
+        if parts == ["profiles"] and method == "GET":
+            return self._send(200, [{"id": k, "name": v} for k, v in self.profiles.items()])
+        if len(parts) == 3 and parts[0] == "profiles" and parts[1] in self.profiles and method == "POST":
+            pid = parts[1]
+            if parts[2] == "start":
+                if pid not in self.running:
+                    self.running[pid] = self._launch(False)
+                return self._send(200, {"pid": self.running[pid]["proc"].pid})
+            if parts[2] == "stop":
+                self._stop(pid)
+                return self._send(200, {"stopped": True})
+        self.send_response(404)
+        self.send_header("Content-Type", "text/html")
+        self.end_headers()
+        self.wfile.write(b"<h1>Not Found</h1>")
 
     def do_GET(self):  # noqa: N802
         self._route("GET")
@@ -216,7 +236,7 @@ async def test_auto_detect_connection_switches_to_stealth_and_runs_a_flow(servic
     adapter = services.adapters.get(conn)
     assert (await sync_profiles(services.repos, adapter, conn)).created == 2
     saved = services.repos.connections.extra(services.repos.connections.get(conn.id))
-    assert saved == {"detected": "3", "flavor": "stealth"}  # remembered for next time
+    assert saved == {"detected": DETECT_VERSION, "flavor": "stealth"}  # remembered for next time
     services.settings.settings.resource_guard = False
     services.settings.settings.humanize.step_delay_min = services.settings.settings.humanize.step_delay_max = 0
     steps = [new_step("open_url", url=f"{site_url}/welcome.html?email=kok@stealth.dev"),
@@ -236,3 +256,63 @@ async def test_auto_detect_connection_switches_to_stealth_and_runs_a_flow(servic
     starts = [b for m, p, b in FakeStealth.calls if p.endswith("/start")]
     assert starts and all(b == {"automation": True} for b in starts)
     assert FakeStealth.running == {}  # stopped through the API at the end
+
+
+INTERNAL = {"start_url": "/profiles/{id}/start", "start_method": "POST", "start_body": "", "ws_path": "auto",
+            "stop_url": "/profiles/{id}/stop", "stop_method": "POST", "list_url": "/profiles", "list_method": "GET",
+            "list_items_path": "", "list_id_path": "id", "list_name_path": "name", "list_group_path": "",
+            "key_location": "header", "key_name": "Authorization", "key_prefix": "Bearer ", "success_path": "auto"}
+
+
+async def test_recognised_by_answer_shape_not_field_names(fake_stealth):
+    from flowpilot.adapters.stealth import looks_like_stealth
+
+    assert await looks_like_stealth(fake_stealth, KEY)
+    assert await looks_like_stealth(fake_stealth, "wrong-key")  # 401 {"ok": false, …} is still Stealth
+    FakeStealth.locked = True
+    assert await looks_like_stealth(fake_stealth, KEY)
+    FakeStealth.locked = False
+    assert not await looks_like_stealth("http://127.0.0.1:1", KEY)  # nothing running
+
+
+async def _run_flow(services, conn, site_url) -> object:
+    from flowpilot.services.profile_sync import sync_profiles
+
+    await sync_profiles(services.repos, services.adapters.get(conn), conn)
+    services.settings.settings.resource_guard = False
+    services.settings.settings.humanize.step_delay_min = services.settings.settings.humanize.step_delay_max = 0
+    steps = [new_step("open_url", url=f"{site_url}/welcome.html?email=kok@stealth.dev"),
+             new_step("extract", selector="#who", variable="who"),
+             new_step("save_value", values=["who = {{who}}"]),
+             new_step("close_browser")]
+    flow = services.repos.flows.create("Stealth", json.dumps(dump_steps(steps)))
+    kok = next(a for a in services.repos.accounts.list() if a.name == "kok" and a.connection_id == conn.id)
+    run_id = await services.engine.start(flow, TargetSpec(mode="accounts", account_ids=[kok.id]),
+                                         RunOptions(launch_delay_min=0, launch_delay_max=0))
+    while run_id in services.engine.runs:
+        await asyncio.sleep(0.2)
+    return services.repos.runs.items(run_id)[0]
+
+
+@needs_browser
+@pytest.mark.parametrize("conn_type,extra", [
+    ("custom", INTERNAL),  # A: a Custom connection filled with the app's internal addresses
+    ("auto", {**INTERNAL, "detected": DETECT_VERSION}),  # B: auto-detect that settled on the internal addresses
+    ("auto", {**INTERNAL, "detected": "3"}),  # saved by v0.2.5: detected again
+])
+async def test_connection_on_internal_routes_moves_to_automation_api(services, site_url, fake_stealth,
+                                                                     conn_type, extra):
+    conn = services.repos.connections.save(Connection(type=conn_type, name="stealth", base_url=fake_stealth,
+                                                      extra_json=json.dumps(extra)), api_key=KEY)
+    item = await _run_flow(services, conn, site_url)
+    assert item.status == "done", item.error
+    assert json.loads(item.results_json)["who"] == "kok@stealth.dev"
+    api_starts = [b for m, p, b in FakeStealth.calls if p.startswith("/api/v1/") and p.endswith("/start")]
+    assert api_starts and all(b == {"automation": True} for b in api_starts)
+    assert services.repos.connections.extra(services.repos.connections.get(conn.id))["flavor"] == "stealth"
+    assert FakeStealth.running == {}  # the profile was stopped at the end
+    # next time it goes straight to the automation API
+    FakeStealth.calls.clear()
+    item = await _run_flow(services, services.repos.connections.get(conn.id), site_url)
+    assert item.status == "done", item.error
+    assert not any(p.startswith("/profiles") for m, p, b in FakeStealth.calls)

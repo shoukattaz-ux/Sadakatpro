@@ -31,7 +31,8 @@ PROBE_ID = "flowpilot-probe-0000"
 CONTROL_WORD = "flowpilot-no-such-action"
 OPENAPI_PATHS = ("/openapi.json", "/swagger.json", "/api/openapi.json", "/docs/openapi.json", "/v1/openapi.json",
                  "/api-docs", "/swagger/v1/swagger.json", "/api/docs/openapi.json")
-LIST_PATHS = ("/profiles", "/api/profiles", "/api/v1/profiles", "/api/v2/profiles", "/v1/profiles", "/v2/profiles",
+# versioned public APIs first: some apps also serve internal routes (e.g. /profiles) for their own window
+LIST_PATHS = ("/api/v1/profiles", "/api/v2/profiles", "/api/profiles", "/v1/profiles", "/v2/profiles", "/profiles",
               "/profile/list", "/api/profile/list", "/api/v1/profile/list", "/api/v1/profiles/list",
               "/api/profiles/list", "/profiles/list", "/api/v1/user/list", "/api/v1/browser/list", "/browser/list",
               "/api/browser/list", "/api/browsers", "/browsers", "/api/v1/browsers", "/api/profile", "/profile")

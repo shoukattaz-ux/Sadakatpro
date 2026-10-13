@@ -18,7 +18,10 @@ Everything is configured in the connection editor:
 from __future__ import annotations
 
 import json
+from collections.abc import Callable
 from typing import Any
+
+from loguru import logger
 
 from flowpilot.adapters.base import (
     AdapterError,
@@ -31,6 +34,7 @@ from flowpilot.adapters.base import (
 )
 from flowpilot.adapters.cdp_locate import find_pid, locate_by_pid
 from flowpilot.adapters.discovery import api_failure, find_cdp
+from flowpilot.adapters.stealth import StealthAdapter, looks_like_stealth
 
 
 class CustomAdapter(BaseHttpAdapter):
@@ -63,6 +67,26 @@ class CustomAdapter(BaseHttpAdapter):
         ExtraField("success_value", "Success value", "e.g. 0", "0"),
         ExtraField("host", "Debug host", "Used when the answer contains only a port", "127.0.0.1"),
     ]
+
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        super().__init__(*args, **kwargs)
+        #: Called with updated settings (e.g. after switching to a known API) so they are saved.
+        self.on_detected: Callable[[dict[str, Any]], None] | None = None
+        #: A browser FlowPilot knows exactly (Stealth Browser) is driven by its own adapter, even when
+        #: the connection was set up as Custom / auto-detect with other addresses.
+        self._known: StealthAdapter | None = None
+        if self.extra.get("flavor") == "stealth":
+            self._known = StealthAdapter(self.base_url, self.api_key, transport=self._transport)
+
+    def _settings_for_known(self) -> dict[str, Any]:
+        return {**self.extra, "flavor": "stealth"}
+
+    def _switch_to_known(self) -> None:
+        """From now on use Stealth Browser's automation API (and remember it for this connection)."""
+        self._known = StealthAdapter(self.base_url, self.api_key, transport=self._transport)
+        self.extra = self._settings_for_known()
+        if self.on_detected is not None:
+            self.on_detected(dict(self.extra))
 
     def _make_client(self) -> HttpClient:
         headers: dict[str, str] = {}
@@ -112,6 +136,8 @@ class CustomAdapter(BaseHttpAdapter):
 
     # -- adapter API ---------------------------------------------------------------
     async def test_connection(self) -> ConnectionResult:
+        if self._known is not None:
+            return await self._known.test_connection()
         if not self.extra.get("list_url"):
             try:
                 await self.http.request("GET", "/")
@@ -121,6 +147,8 @@ class CustomAdapter(BaseHttpAdapter):
         return await super().test_connection()
 
     async def list_profiles(self) -> list[RemoteProfile]:
+        if self._known is not None:
+            return await self._known.list_profiles()
         data = await self._call("list")
         items = json_path(data, self.extra.get("list_items_path") or "") if self.extra.get("list_items_path") else data
         if not isinstance(items, list):
@@ -136,6 +164,8 @@ class CustomAdapter(BaseHttpAdapter):
         return result
 
     async def start_profile(self, profile_id: str) -> str:
+        if self._known is not None:
+            return await self._known.start_profile(profile_id)
         data = await self._call("start", profile_id)
         ws_path = (self.extra.get("ws_path") or "").strip()
         if ws_path in ("", "auto"):
@@ -143,6 +173,15 @@ class CustomAdapter(BaseHttpAdapter):
             found = find_cdp(data, host)
             if found:
                 return found
+            if await looks_like_stealth(self.base_url, self.api_key, self._transport):
+                # This address opened the profile for normal use (e.g. Stealth Browser's own internal
+                # route, which answers only {"pid": …}). Use its automation API instead: it closes the
+                # profile and opens it again for automation.
+                logger.info("Start answer had no debugging address; switching {} to Stealth Browser's "
+                            "automation API", self.base_url)
+                self._switch_to_known()
+                assert self._known is not None
+                return await self._known.start_profile(profile_id)
             pid = find_pid(data)
             if pid is None:
                 self._expect(False, "The browser started the profile but FlowPilot could not find its debugging "
@@ -179,10 +218,14 @@ class CustomAdapter(BaseHttpAdapter):
                            "fixed port) and return the port or ws:// address in the start answer.")
 
     async def stop_profile(self, profile_id: str) -> None:
+        if self._known is not None:
+            return await self._known.stop_profile(profile_id)
         if self.extra.get("stop_url"):
             await self._call("stop", profile_id)
 
     async def is_running(self, profile_id: str) -> bool:
+        if self._known is not None:
+            return await self._known.is_running(profile_id)
         if not self.extra.get("status_url"):
             return False
         data = await self._call("status", profile_id)

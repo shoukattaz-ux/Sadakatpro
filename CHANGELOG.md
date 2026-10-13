@@ -2,6 +2,21 @@
 
 All notable changes to FlowPilot are listed here.
 
+## [0.2.6] — 2026-10-13
+
+### Fixed
+- **Stealth Browser: “The profile is open (process …), but it was started without a debugging port”.**
+  Stealth Browser also serves internal addresses for its own window (`/profiles/…`, without `/api/v1`). A start
+  there opens the profile for normal use and answers only `{"pid": …}`. Connections set up as *Custom* or
+  *Any browser (auto-detect)* could end up on those addresses, and 0.2.5 recognised Stealth Browser only by
+  guessed field names. Now:
+  - Stealth Browser is recognised by its documented answer format (`{"ok": …}` from `/api/v1`), also while it
+    is locked or when the key is wrong.
+  - Any Custom or auto-detect connection whose start answer has no debugging address checks for Stealth
+    Browser and switches to its automation API on the spot (the profile is closed and opened again for
+    automation), and remembers this — no settings to change.
+  - Auto-detection tries versioned API addresses (`/api/v1/…`) before bare ones.
+
 ## [0.2.5] — 2026-10-13
 
 ### New

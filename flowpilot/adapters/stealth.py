@@ -211,22 +211,30 @@ class StealthAdapter(BaseHttpAdapter):
                                f"FlowPilot has {have}. Update FlowPilot, or use a Chrome profile.")
 
 
+def _is_envelope(data: Any) -> bool:
+    """Stealth Browser's documented answer shape: {"ok": true, "data": …} / {"ok": false, "error": {…}}."""
+    return isinstance(data, dict) and isinstance(data.get("ok"), bool) and (
+        "data" in data or isinstance(data.get("error"), dict))
+
+
 async def looks_like_stealth(base_url: str, api_key: str, transport: httpx.AsyncBaseTransport | None = None) -> bool:
-    """True when ``base_url`` is Stealth Browser's API (its /api/v1/status answer is recognisable)."""
+    """True when ``base_url`` serves Stealth Browser's automation API (``/api/v1`` with its
+    ``{"ok": …}`` answers). Works when the key is wrong (401) or the app is locked (423) too."""
     headers = {"Authorization": f"Bearer {api_key}"} if api_key else {}
+    base = base_url.rstrip("/")
     try:
         async with httpx.AsyncClient(timeout=5.0, transport=transport, trust_env=False) as client:
-            resp = await client.get(f"{base_url.rstrip('/')}/api/v1/status", headers=headers)
-        data = resp.json()
-    except (httpx.HTTPError, ValueError):
+            for path in ("/api/v1/status", "/api/v1/profiles"):
+                resp = await client.get(base + path, headers=headers)
+                try:
+                    data = resp.json()
+                except ValueError:
+                    continue
+                if _is_envelope(data):
+                    return True
+    except httpx.HTTPError:
         return False
-    if not isinstance(data, dict) or "ok" not in data:
-        return False
-    if resp.status_code == 423:
-        return True  # locked: only Stealth Browser answers like this
-    info = data.get("data")
-    return bool(data.get("ok")) and isinstance(info, dict) and any(
-        k in info for k in ("engines", "playwright_version", "playwright"))
+    return False
 
 
 class _NoClient:

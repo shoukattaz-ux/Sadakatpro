@@ -1,6 +1,6 @@
 [project]
 name = "flowpilot"
-version = "0.2.5"
+version = "0.2.6"
 description = "FlowPilot - no-code browser automation studio for anti-detect browser profiles"
 readme = "README.md"
 requires-python = ">=3.11"
