@@ -2,6 +2,23 @@
 
 All notable changes to FlowPilot are listed here.
 
+## [0.2.1] — 2026-10-13
+
+### New
+- **“Any browser (auto-detect)” connection type** — for anti-detect browsers that are not in the list
+  (including your own): enter only the API address and API key, press *Test connection*, and FlowPilot works
+  out the rest by itself: how the key is sent, which address lists the profiles, and which addresses start and
+  stop a profile. It reads the browser's API description (`/openapi.json`) when there is one and otherwise tries
+  the common address patterns. Detection never opens a real profile. What was found is shown and saved with the
+  connection.
+- **Auto-fill from the browser** button for the *Custom* type: fills the endpoint fields automatically
+  (you can still adjust them).
+- The debugging address of a started profile is now found anywhere in the browser's answer
+  (`ws_path` = `auto`), and error answers like `{"success": false}` are reported clearly.
+
+### Fixed
+- The “address not found (404)” message now explains what to do instead.
+
 ## [0.2.0] — 2026-10-12
 
 ### New

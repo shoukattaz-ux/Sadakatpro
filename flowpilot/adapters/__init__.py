@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import Any
 
 from flowpilot.adapters.adspower import AdsPowerAdapter
+from flowpilot.adapters.auto import AutoDetectAdapter
 from flowpilot.adapters.base import AdapterError, BrowserAdapter, ConnectionResult, ExtraField, RemoteProfile
 from flowpilot.adapters.custom import CustomAdapter
 from flowpilot.adapters.dolphin import DolphinAdapter
@@ -20,6 +21,7 @@ ADAPTERS: dict[str, Any] = {
     "dolphin": DolphinAdapter,
     "multilogin": MultiloginAdapter,
     "octo": OctoAdapter,
+    "auto": AutoDetectAdapter,
     "custom": CustomAdapter,
     "local": LocalChromeAdapter,
 }

@@ -38,7 +38,7 @@ def test_json_path():
 
 
 def test_registry_complete():
-    assert set(ADAPTERS) == {"adspower", "gologin", "dolphin", "multilogin", "octo", "custom", "local"}
+    assert set(ADAPTERS) == {"adspower", "gologin", "dolphin", "multilogin", "octo", "auto", "custom", "local"}
     with pytest.raises(AdapterError):
         create_adapter("unknown", "", "")
 

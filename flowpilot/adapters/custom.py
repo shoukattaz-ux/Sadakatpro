@@ -29,6 +29,7 @@ from flowpilot.adapters.base import (
     RemoteProfile,
     json_path,
 )
+from flowpilot.adapters.discovery import api_failure, find_cdp
 
 
 class CustomAdapter(BaseHttpAdapter):
@@ -39,7 +40,8 @@ class CustomAdapter(BaseHttpAdapter):
         ExtraField("start_url", "Start URL", "Path or full URL. {id} = profile ID", "/api/v1/browser/start?user_id={id}"),
         ExtraField("start_method", "Start method", "", "GET", choices=["GET", "POST"]),
         ExtraField("start_body", "Start body (JSON)", 'Optional, e.g. {"profileId": "{id}"}', ""),
-        ExtraField("ws_path", "JSON path to WebSocket/CDP address", "e.g. data.ws.puppeteer", "data.ws.puppeteer"),
+        ExtraField("ws_path", "JSON path to WebSocket/CDP address",
+                   "e.g. data.ws.puppeteer — or 'auto' to find it anywhere in the answer", "data.ws.puppeteer"),
         ExtraField("stop_url", "Stop URL", "Path or full URL. {id} = profile ID", "/api/v1/browser/stop?user_id={id}"),
         ExtraField("stop_method", "Stop method", "", "GET", choices=["GET", "POST"]),
         ExtraField("stop_body", "Stop body (JSON)", "Optional", ""),
@@ -56,7 +58,7 @@ class CustomAdapter(BaseHttpAdapter):
         ExtraField("key_location", "Where the API key goes", "", "header", choices=["header", "query", "none"]),
         ExtraField("key_name", "API key header/parameter name", "", "Authorization"),
         ExtraField("key_prefix", "API key prefix", "Text before the key, e.g. 'Bearer '", "Bearer "),
-        ExtraField("success_path", "Success field (optional)", "e.g. code", ""),
+        ExtraField("success_path", "Success field (optional)", "e.g. code — or 'auto' to detect error answers", ""),
         ExtraField("success_value", "Success value", "e.g. 0", "0"),
         ExtraField("host", "Debug host", "Used when the answer contains only a port", "127.0.0.1"),
     ]
@@ -97,6 +99,11 @@ class CustomAdapter(BaseHttpAdapter):
         path = (self.extra.get("success_path") or "").strip()
         if not path:
             return
+        if path == "auto":  # generic: {"success": false}, {"code": 5, "msg": ...}, {"error": ...}
+            failure = api_failure(data)
+            if failure:
+                raise AdapterError(f"The browser API reported a failure: {failure[:300]}")
+            return
         value = json_path(data, path)
         if str(value) != str(self.extra.get("success_value", "")):
             message = json_path(data, "msg") or json_path(data, "message") or json_path(data, "error") or data
@@ -129,7 +136,13 @@ class CustomAdapter(BaseHttpAdapter):
 
     async def start_profile(self, profile_id: str) -> str:
         data = await self._call("start", profile_id)
-        value = json_path(data, self.extra.get("ws_path") or "")
+        ws_path = (self.extra.get("ws_path") or "").strip()
+        if ws_path in ("", "auto"):
+            found = find_cdp(data, self.extra.get("host") or "127.0.0.1")
+            self._expect(bool(found), "The browser started the profile but FlowPilot could not find its debugging "
+                         "address (ws://… or a port) in the answer.", data)
+            return found
+        value = json_path(data, ws_path)
         self._expect(value not in (None, ""), "Could not find the debugging address in the start answer. "
                      "Check 'JSON path to WebSocket/CDP address'.", data)
         text = str(value)

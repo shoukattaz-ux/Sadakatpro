@@ -29,7 +29,10 @@ TYPE_HELP = {
     "dolphin": "Keep Dolphin Anty open. The API token is in your Dolphin profile → API.",
     "multilogin": "Keep the Multilogin X agent running. Needs a token and the folder ID.",
     "octo": "Keep Octo Browser open. The API token is in Octo → Settings.",
-    "custom": "For any other browser (or your own): fill in where the start/stop/list endpoints are.",
+    "auto": "For any other browser (or your own): enter only the API address and key shown in the browser's "
+            "settings, then press Test connection — FlowPilot works out the rest automatically.",
+    "custom": "For any other browser: fill in where the start/stop/list endpoints are, or press "
+              "“Auto-fill from the browser”.",
     "local": "Uses Chrome/Chromium on this PC. Good for trying FlowPilot and building flows.",
 }
 
@@ -72,7 +75,15 @@ class ConnectionDialog(QDialog):
         form.addRow("", self.key_help)
         root.addLayout(form)
 
-        root.addWidget(title_label("Extra settings", "subtitle"))
+        extra_head = QHBoxLayout()
+        self.extra_title = title_label("Extra settings", "subtitle")
+        extra_head.addWidget(self.extra_title)
+        extra_head.addStretch(1)
+        self.autofill_btn = ClayButton("Auto-fill from the browser", "sparkles", "secondary", compact=True,
+                                       tooltip="Ask the browser's API and fill these fields automatically")
+        self.autofill_btn.clicked.connect(self.autofill)
+        extra_head.addWidget(self.autofill_btn)
+        root.addLayout(extra_head)
         self.extra_area = QScrollArea()
         self.extra_area.setWidgetResizable(True)
         self.extra_host = QWidget()
@@ -81,6 +92,8 @@ class ConnectionDialog(QDialog):
         self.extra_area.setWidget(self.extra_host)
         root.addWidget(self.extra_area, 1)
         self.extra_inputs: dict[str, Any] = {}
+        #: settings found by auto-detection ("Any browser" type), saved with the connection
+        self._detected: dict[str, Any] = {}
 
         self.result = QLabel("")
         self.result.setWordWrap(True)
@@ -107,9 +120,15 @@ class ConnectionDialog(QDialog):
                 self.api_key.setText(app.repos.connections.api_key(conn))
             except Exception:
                 self.api_key.setText("")
-            self._on_type(keep_url=True, values=app.repos.connections.extra(conn))
+            saved = app.repos.connections.extra(conn)
+            self._on_type(keep_url=True, values=saved)
+            if conn.type == "auto":
+                self._detected = saved
         else:
             self._on_type()
+        # a different address or key means the detected endpoints may no longer apply
+        self.base_url.textEdited.connect(lambda *_: self._detected.clear())
+        self.api_key.textEdited.connect(lambda *_: self._detected.clear())
 
     @staticmethod
     def _with_help(text: str, help_text: str) -> QWidget:
@@ -148,6 +167,12 @@ class ConnectionDialog(QDialog):
             w.setToolTip(f.help)
             self.extra_inputs[f.key] = w
             self.extra_form.addRow(self._with_help(f.label, f.help or f.label), w)
+        has_extra = bool(cls.extra_fields)
+        self.extra_title.setVisible(has_extra)
+        self.extra_area.setVisible(has_extra)
+        self.autofill_btn.setVisible(key == "custom")
+        if key != "auto":
+            self._detected = {}
         self.result.setText("")
 
     def values(self) -> tuple[Connection, str]:
@@ -156,6 +181,8 @@ class ConnectionDialog(QDialog):
         conn.type = self.type_box.currentData()
         conn.name = self.name.text().strip() or ADAPTERS[conn.type].display_name
         conn.base_url = self.base_url.text().strip()
+        if conn.type == "auto":
+            extra = dict(self._detected)
         conn.extra_json = json.dumps(extra)
         return conn, self.api_key.text().strip()
 
@@ -169,7 +196,10 @@ class ConnectionDialog(QDialog):
         async def go() -> Any:
             adapter = create_adapter(conn.type, conn.base_url, key, json.loads(conn.extra_json))
             try:
-                return await adapter.test_connection()
+                result = await adapter.test_connection()
+                if result.ok and hasattr(adapter, "detected_settings"):
+                    self._detected = adapter.detected_settings()
+                return result
             finally:
                 await adapter.aclose()
 
@@ -186,6 +216,34 @@ class ConnectionDialog(QDialog):
             self.result.style().polish(self.result)
 
         run_async(go(), done, failed)
+
+    def autofill(self) -> None:
+        """Custom type: detect the endpoints and put them into the fields (the user can still edit them)."""
+        from flowpilot.adapters.discovery import discover
+
+        self.result.setProperty("role", "muted")
+        self.result.setText("Asking the browser's API…")
+        self.result.style().polish(self.result)
+        self.autofill_btn.setEnabled(False)
+
+        def done(res: Any) -> None:
+            self.autofill_btn.setEnabled(True)
+            if res.ok:
+                for k, v in res.config.items():
+                    w = self.extra_inputs.get(k)
+                    if isinstance(w, QComboBox):
+                        w.setCurrentText(str(v))
+                    elif w is not None:
+                        w.setText(str(v))
+            self.result.setProperty("role", "success" if res.ok else "error")
+            self.result.setText(("✔ Filled in:\n" if res.ok else "✖ ") + res.summary())
+            self.result.style().polish(self.result)
+
+        def failed(exc: BaseException) -> None:
+            self.autofill_btn.setEnabled(True)
+            self.result.setText(f"✖ {exc}")
+
+        run_async(discover(self.base_url.text().strip(), self.api_key.text().strip()), done, failed)
 
     def save(self) -> None:
         conn, key = self.values()

@@ -140,7 +140,9 @@ class HttpClient:
                         f"The browser API refused the request (HTTP {resp.status_code}). Check the API key."
                     )
                 if resp.status_code == 404:
-                    raise AdapterError(f"The browser API address was not found (HTTP 404): {url}")
+                    raise AdapterError(f"The browser API does not have this address (HTTP 404): {url}\n"
+                                       "If this is not the browser type you chose, use the type "
+                                       "“Any browser (auto-detect)” — it finds the right addresses itself.")
                 if resp.status_code >= 400:
                     raise AdapterError(f"The browser API returned an error (HTTP {resp.status_code}): {resp.text[:300]}")
                 try:

@@ -58,6 +58,7 @@ class _ConnectionPage(QWizardPage):
         lay.addWidget(self.result)
         lay.addStretch(1)
         self.ok = False
+        self.detected: dict[str, Any] = {}
         self.type_box.currentIndexChanged.connect(self._on_type)
         self._on_type()
 
@@ -70,6 +71,7 @@ class _ConnectionPage(QWizardPage):
         self.help.setText(TYPE_HELP.get(key, "") + ("\nFor the Custom type, finish the setup in Settings → "
                                                     "Connections." if key == "custom" else ""))
         self.ok = False
+        self.detected = {}
         self.result.setText("")
         self.completeChanged.emit()
 
@@ -80,7 +82,10 @@ class _ConnectionPage(QWizardPage):
         async def go() -> Any:
             adapter = create_adapter(key, self.url.text().strip(), self.key.text().strip(), {})
             try:
-                return await adapter.test_connection()
+                result = await adapter.test_connection()
+                if result.ok and hasattr(adapter, "detected_settings"):
+                    self.detected = adapter.detected_settings()
+                return result
             finally:
                 await adapter.aclose()
 
@@ -99,7 +104,7 @@ class _ConnectionPage(QWizardPage):
     def validatePage(self) -> bool:  # noqa: N802
         key = self.type_box.currentData()
         conn = Connection(type=key, name=ADAPTERS[key].display_name, base_url=self.url.text().strip(),
-                          extra_json=json.dumps({}))
+                          extra_json=json.dumps(self.detected if key == "auto" else {}))
         self.wiz.connection = self.wiz.app.repos.connections.save(conn, api_key=self.key.text().strip())
         self.wiz.app.bridge.data_changed.emit("connections")
         return True
