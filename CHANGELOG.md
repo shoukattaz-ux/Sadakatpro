@@ -2,6 +2,22 @@
 
 All notable changes to FlowPilot are listed here.
 
+## [0.2.4] — 2026-10-13
+
+### Fixed
+- **Small screens / laptops with display scaling**: the window now opens fitted to the screen (maximized on
+  small screens) and the layout adapts. Below 1280 px the sidebar shows icons only; on the Flows page the
+  flow list folds away (the ☰ button next to the flow name shows it again) and buttons show only their icon
+  when space is tight. The step editor on the right — with *Pick* — is never cut off any more.
+- **Browsers whose start answer only contains a process id** (e.g. `{"pid": 18708}`): FlowPilot now finds the
+  debugging port from that browser process itself (its command line, `DevToolsActivePort`, or the ports it
+  listens on) and checks it before connecting. If the browser was started without any debugging port, the
+  message says exactly what to turn on.
+- **“GitHub is limiting update checks”**: update checks no longer use GitHub's API, which allows only 60
+  checks per hour for everyone sharing an internet address. They now use the normal download links, which
+  have no such limit. (Versions up to 0.2.3 still use the old check — if it says “limiting”, download this
+  version once from the link below; from then on updates work.)
+
 ## [0.2.3] — 2026-10-13
 
 ### Fixed

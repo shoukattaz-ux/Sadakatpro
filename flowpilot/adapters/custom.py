@@ -29,6 +29,7 @@ from flowpilot.adapters.base import (
     RemoteProfile,
     json_path,
 )
+from flowpilot.adapters.cdp_locate import find_pid, locate_by_pid
 from flowpilot.adapters.discovery import api_failure, find_cdp
 
 
@@ -138,10 +139,15 @@ class CustomAdapter(BaseHttpAdapter):
         data = await self._call("start", profile_id)
         ws_path = (self.extra.get("ws_path") or "").strip()
         if ws_path in ("", "auto"):
-            found = find_cdp(data, self.extra.get("host") or "127.0.0.1")
-            self._expect(bool(found), "The browser started the profile but FlowPilot could not find its debugging "
-                         "address (ws://… or a port) in the answer.", data)
-            return found
+            host = self.extra.get("host") or "127.0.0.1"
+            found = find_cdp(data, host)
+            if found:
+                return found
+            pid = find_pid(data)
+            if pid is None:
+                self._expect(False, "The browser started the profile but FlowPilot could not find its debugging "
+                             "address (ws://… or a port) in the answer.", data)
+            return await self._address_from_process(pid, host)  # type: ignore[arg-type]
         value = json_path(data, ws_path)
         self._expect(value not in (None, ""), "Could not find the debugging address in the start answer. "
                      "Check 'JSON path to WebSocket/CDP address'.", data)
@@ -151,6 +157,26 @@ class CustomAdapter(BaseHttpAdapter):
         if text.startswith(("ws://", "wss://", "http://", "https://")):
             return text
         return f"ws://{text}"  # e.g. "127.0.0.1:9222/devtools/browser/..."
+
+    async def _address_from_process(self, pid: int, host: str) -> str:
+        """The start answer only had a process id: read the debugging port from that process."""
+        address, scan = await locate_by_pid(pid, host)
+        if address:
+            return address
+        if not scan.found:
+            raise AdapterError(f"The browser started the profile as process {pid}, but that process is not running "
+                               "on this PC, so FlowPilot cannot find its debugging port. If the browser runs on "
+                               "another computer, its API must return the debugging address (ws://… or a port).")
+        if scan.pipe_only:
+            raise AdapterError(f"The profile is open (process {pid}), but your browser started it in a private "
+                               "automation mode (--remote-debugging-pipe) that no other program can join. In the "
+                               "browser's settings turn on “remote debugging” / “CDP port” / “automation port”, "
+                               "then try again.")
+        raise AdapterError(f"The profile is open (process {pid}), but it was started without a debugging port, so "
+                           "FlowPilot cannot control it. In your anti-detect browser's settings turn on “remote "
+                           "debugging” / “CDP port” / “automation” (the name differs per browser) and try again. "
+                           "If you build this browser yourself: start Chrome with --remote-debugging-port=0 (or a "
+                           "fixed port) and return the port or ws:// address in the start answer.")
 
     async def stop_profile(self, profile_id: str) -> None:
         if self.extra.get("stop_url"):

@@ -191,6 +191,7 @@ class AccountsPage(Page):
     title = "Accounts"
     subtitle = "Your browser profiles. Group them, add their variables (email, password…), and run flows on them."
     icon = "users"
+    ICONS_ONLY_BELOW = 1000
 
     def __init__(self, app: AppContext) -> None:
         super().__init__(app)
@@ -284,6 +285,7 @@ class AccountsPage(Page):
         tcard.body.addWidget(self.table, 1)
 
         brow = QHBoxLayout()
+        bulk_buttons = []
         for text, icon, slot in (("Edit / variables", "edit", self.edit_selected),
                                  ("Move to group", "folder", self._move_menu),
                                  ("Enable", "check", lambda: self._set_enabled(True)),
@@ -292,6 +294,8 @@ class AccountsPage(Page):
             b = ClayButton(text, icon, "danger" if text == "Delete" else "neutral", compact=True)
             b.clicked.connect(slot)
             brow.addWidget(b)
+            bulk_buttons.append(b)
+        self.shrinkable(sync, imp, *bulk_buttons)
         brow.addStretch(1)
         tcard.body.addLayout(brow)
         self.empty = EmptyState("users", "No accounts yet",

@@ -5,9 +5,10 @@ from __future__ import annotations
 from typing import Any
 
 from PySide6.QtCore import QPoint, QRectF, QSize, Qt, QTimer
-from PySide6.QtGui import QAction, QCloseEvent, QColor, QIcon, QPainter, QPixmap
+from PySide6.QtGui import QAction, QCloseEvent, QColor, QGuiApplication, QIcon, QPainter, QPixmap
 from PySide6.QtWidgets import (
     QApplication,
+    QBoxLayout,
     QButtonGroup,
     QHBoxLayout,
     QLabel,
@@ -44,6 +45,14 @@ class NavButton(ClayButton):
         super().__init__(text, icon, "neutral")
         self.setCheckable(True)
         self.setMinimumWidth(190)
+        self.compact = False
+
+    def set_compact(self, compact: bool) -> None:
+        """Icon only (small screens); the page name stays in the tooltip."""
+        self.compact = compact
+        self.setMinimumWidth(48 if compact else 190)
+        self.updateGeometry()
+        self.update()
 
     def colors(self, p: Any) -> tuple[str | None, str]:
         if self.isChecked():
@@ -65,6 +74,11 @@ class NavButton(ClayButton):
             p.setBrush(c)
             p.drawRoundedRect(rect, 16, 16)
         color = palette.primary if self.isChecked() else palette.text
+        if self.compact:
+            if self.icon_name:
+                p.drawPixmap(QPoint(int(rect.center().x() - 10), int(rect.center().y() - 10)),
+                             pixmap(self.icon_name, color, 20))
+            return
         x = rect.left() + 16
         if self.icon_name:
             p.drawPixmap(QPoint(int(x), int(rect.center().y() - 10)), pixmap(self.icon_name, color, 20))
@@ -110,8 +124,8 @@ class MainWindow(QMainWindow):
         self._really_quit = False
         self.setWindowTitle("FlowPilot")
         self.setWindowIcon(app_icon())
-        self.resize(1440, 900)
-        self.setMinimumSize(QSize(1100, 700))
+        self.setMinimumSize(QSize(900, 560))
+        self._compact: bool | None = None
         root = QWidget()
         root.setObjectName("PageRoot")
         self.setCentralWidget(root)
@@ -121,10 +135,11 @@ class MainWindow(QMainWindow):
 
         side = ClayCard(radius=26, padding=8)
         side.setFixedWidth(250)
+        self.side = side
         logo_row = QHBoxLayout()
         logo = QLabel()
         logo.setPixmap(app_icon().pixmap(36, 36))
-        name = QLabel("FlowPilot")
+        name = self.app_name = QLabel("FlowPilot")
         f = name.font()
         f.setPointSizeF(f.pointSizeF() + 6)
         f.setBold(True)
@@ -148,7 +163,7 @@ class MainWindow(QMainWindow):
             self.nav.addButton(btn, i)
             side.body.addWidget(btn)
         side.body.addStretch(1)
-        bottom = QHBoxLayout()
+        bottom = self.side_bottom = QHBoxLayout()
         self.theme_btn = IconButton("moon", "Switch light / dark theme", size=32)
         self.theme_btn.clicked.connect(self.toggle_theme)
         help_btn = IconButton("help", "Run the setup wizard again", size=32)
@@ -157,7 +172,8 @@ class MainWindow(QMainWindow):
         bottom.addWidget(help_btn)
         bottom.addStretch(1)
         side.body.addLayout(bottom)
-        side.body.addWidget(muted_label(f"v{__version__}"))
+        self.version_label = muted_label(f"v{__version__}")
+        side.body.addWidget(self.version_label)
         lay.addWidget(side)
         right = QWidget()
         right.setObjectName("Transparent")
@@ -177,6 +193,45 @@ class MainWindow(QMainWindow):
         self._update_theme_icon()
         self._setup_tray()
         app.services.notifier.desktop = self._desktop_notify
+        self.fit_to_screen()
+
+    # ------------------------------------------------------------------ size
+    COMPACT_BELOW = 1280
+
+    def fit_to_screen(self) -> None:
+        """Open at a size that fits the screen (laptops with display scaling are often ~1100 px wide)."""
+        screen = self.screen() or QGuiApplication.primaryScreen()
+        avail = screen.availableGeometry() if screen else None
+        width, height = 1440, 900
+        if avail is not None and avail.width() > 0:
+            width, height = min(width, avail.width() - 16), min(height, avail.height() - 40)
+        self.resize(max(width, self.minimumWidth()), max(height, self.minimumHeight()))
+        self._apply_compact()
+
+    def show_fitted(self) -> None:
+        """Show the window; maximized when the screen is small."""
+        screen = self.screen() or QGuiApplication.primaryScreen()
+        if screen is not None and screen.availableGeometry().width() < 1500:
+            self.showMaximized()
+        else:
+            self.show()
+
+    def resizeEvent(self, event: Any) -> None:  # noqa: N802
+        super().resizeEvent(event)
+        self._apply_compact()
+
+    def _apply_compact(self) -> None:
+        compact = self.width() < self.COMPACT_BELOW
+        if compact == self._compact:
+            return
+        self._compact = compact
+        self.side.setFixedWidth(76 if compact else 250)
+        self.app_name.setVisible(not compact)
+        self.version_label.setVisible(not compact)
+        self.side_bottom.setDirection(QBoxLayout.Direction.TopToBottom if compact
+                                      else QBoxLayout.Direction.LeftToRight)
+        for btn in self.nav.buttons():
+            btn.set_compact(compact)  # type: ignore[attr-defined]
 
     # ------------------------------------------------------------------ navigation
     def show_page(self, index: int) -> None:

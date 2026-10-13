@@ -57,7 +57,7 @@ class UpdateDialog(QDialog):
                                    "accounts and settings are kept."))
         notes = QTextBrowser()
         notes.setOpenExternalLinks(True)
-        notes.setMarkdown(info.notes or "Improvements and fixes.")
+        notes.setMarkdown(info.notes or f"Improvements and fixes — [see what's new]({info.page_url}).")
         root.addWidget(notes, 1)
         self.progress = QProgressBar()
         self.progress.setRange(0, 100)

@@ -78,12 +78,14 @@ class FlowsPage(Page):
         self.actions.addWidget(self.open_btn)
         self.actions.addWidget(self.close_btn)
 
-        splitter = QSplitter()
+        splitter = self.splitter = QSplitter()
+        splitter.setChildrenCollapsible(False)
         self.content.addWidget(splitter, 1)
+        self._list_choice: bool | None = None  # None = automatic (hidden on small screens)
 
         # ---- flow list
-        left = ClayCard(padding=10)
-        left.setMinimumWidth(250)
+        left = self.list_card = ClayCard(padding=10)
+        left.setMinimumWidth(200)
         left.setMaximumWidth(300)
         left.body.addWidget(title_label("Your flows", "subtitle"))
         self.flow_list = QListWidget()
@@ -110,9 +112,13 @@ class FlowsPage(Page):
 
         # ---- step editor
         center = ClayCard(padding=10)
-        center.setMinimumWidth(520)
         self.flow_title = title_label("No flow selected", "subtitle")
-        center.body.addWidget(self.flow_title)
+        title_row = QHBoxLayout()
+        self.list_toggle = IconButton("list", "Show / hide your flows", size=30)
+        self.list_toggle.clicked.connect(self.toggle_flow_list)
+        title_row.addWidget(self.list_toggle)
+        title_row.addWidget(self.flow_title, 1)
+        center.body.addLayout(title_row)
         tb = QHBoxLayout()
         tb.setSpacing(0)
         self.add_btn = ClayButton("Add step", "plus", "primary", compact=True)
@@ -209,8 +215,8 @@ class FlowsPage(Page):
         splitter.addWidget(center)
 
         # ---- properties
-        right = ClayCard(padding=12)
-        right.setMinimumWidth(320)
+        right = self.form_card = ClayCard(padding=12)
+        right.setMinimumWidth(280)
         self.form = StepForm()
         self.form.changed.connect(self._form_changed)
         self.form.pick_requested.connect(self.pick_element)
@@ -218,6 +224,8 @@ class FlowsPage(Page):
         splitter.addWidget(right)
         splitter.setStretchFactor(1, 1)
         splitter.setSizes([260, 640, 360])
+        self.shrinkable(self.add_btn, self.record_btn, self.ai_btn, self.list_btn, self.chart_btn,
+                        self.run_all_btn, self.run_here_btn, self.run_one_btn, self.stop_btn)
 
         # shortcuts
         for keys, slot in ((QKeySequence.StandardKey.Save, self.save_version), (QKeySequence.StandardKey.Undo, self.undo),
@@ -235,6 +243,24 @@ class FlowsPage(Page):
         self.reload_flows()
         self._reload_profiles()
         self._update_buttons()
+
+    # ================================================================== layout
+    #: page widths below which the flow list folds away / buttons show icons only
+    HIDE_LIST_BELOW = 1060
+    ICONS_ONLY_BELOW = 900
+
+    def toggle_flow_list(self) -> None:
+        self._list_choice = not self.list_card.isVisible()
+        self.list_card.setVisible(self._list_choice)
+
+    def _fit_layout(self) -> None:
+        super()._fit_layout()
+        width = self.width()
+        show_list = self._list_choice if self._list_choice is not None else width >= self.HIDE_LIST_BELOW
+        if show_list != self.list_card.isVisible() and self.isVisible():
+            self.list_card.setVisible(show_list)
+        elif not self.isVisible():
+            self.list_card.setHidden(not show_list)
 
     # ================================================================== flows
     def reload_flows(self, select_id: int | None = None) -> None:
@@ -715,7 +741,7 @@ class FlowsPage(Page):
         tb.adjustSize()
         tb.move(geo.right() - tb.width() - 40, geo.top() + 60)
         tb.show()
-        self.record_btn.setText("Stop recording")
+        self.set_label(self.record_btn, "Stop recording")
         run_async(rec.start(add_open_url=not self.doc.steps), parent=self)
 
     def _recorded_step(self, step: StepBase, replace_last: bool) -> None:
@@ -732,7 +758,7 @@ class FlowsPage(Page):
             self.toolbar_win.close()
             self.toolbar_win.deleteLater()
             self.toolbar_win = None
-        self.record_btn.setText("Record")
+        self.set_label(self.record_btn, "Record")
         recorded = len(self.doc.steps) - max(0, self.recording_from)
         if self.recording_from >= 0 and recorded > 1:
             head, tail = self.doc.steps[:self.recording_from], self.doc.steps[self.recording_from:]

@@ -347,3 +347,37 @@ def test_flowchart_fit_button_shows_whole_flow(qapp):
     chart.toggle_fit()  # second click: back to 100 %
     assert chart._scale == 1.0 and not chart._fitted  # noqa: SLF001
     chart.close()
+
+
+@pytest.mark.parametrize("size", [(1093, 680), (1366, 740), (900, 560)])
+def test_small_screens_fit(ui, qapp, size):
+    """Laptops with display scaling: no panel may overlap another or run past the window edge."""
+    from flowpilot.ui.main_window import MainWindow
+    from flowpilot.ui.pages.flows_page import FlowsPage
+
+    w = MainWindow(ui)
+    w.resize(*size)
+    w.show()
+    w.show_page(w.PAGES.index(FlowsPage))
+    qapp.processEvents()
+    assert w.width() <= max(size[0], w.minimumWidth())
+    assert w.side.width() == (76 if size[0] < w.COMPACT_BELOW else 250)  # icons only on small screens
+    for i, page in enumerate(w.pages):
+        w.show_page(i)
+        qapp.processEvents()
+        assert page.minimumSizeHint().width() <= w.stack.width(), type(page).__name__
+    w.show_page(w.PAGES.index(FlowsPage))
+    qapp.processEvents()
+    page = w.page(FlowsPage)
+    cards = [c for c in (page.list_card, page.splitter.widget(1), page.form_card) if c.isVisible()]
+    edges = [(c.mapTo(w, c.rect().topLeft()).x(), c.mapTo(w, c.rect().topRight()).x()) for c in cards]
+    assert all(right <= w.width() for _, right in edges)
+    assert all(a[1] <= b[0] for a, b in zip(edges, edges[1:]))  # no overlap
+    if size[0] < 1200:
+        assert not page.list_card.isVisible()
+        page.toggle_flow_list()  # the list button brings it back
+        assert page.list_card.isVisible()
+    w.resize(1920, 1040)
+    qapp.processEvents()
+    assert w.side.width() == 250 and page.run_all_btn.text() == "Test flow"
+    w.close()

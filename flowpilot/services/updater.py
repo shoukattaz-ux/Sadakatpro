@@ -27,6 +27,12 @@ from flowpilot import __version__
 
 GITHUB_REPO = os.environ.get("FLOWPILOT_UPDATE_REPO", "shoukattaz-ux/Sadakatpro")
 LATEST_API = "https://api.github.com/repos/{repo}/releases/latest"
+#: The normal web address redirects to the newest release's tag; unlike the API it has no
+#: 60-checks-per-hour limit (which people sharing an internet address hit all the time).
+LATEST_WEB = "https://github.com/{repo}/releases/latest"
+DOWNLOAD = "https://github.com/{repo}/releases/download/{tag}/{name}"
+INSTALLER_NAME = "FlowPilot-Setup.exe"
+NOTES_NAME = "release-notes.md"
 INSTALLER_RE = re.compile(r"^FlowPilot-Setup(?:-[\d.]+)?\.exe$", re.I)
 HEADERS = {"Accept": "application/vnd.github+json", "User-Agent": f"FlowPilot/{__version__}"}
 
@@ -73,12 +79,49 @@ async def check_for_update(current: str = __version__, repo: str = GITHUB_REPO,
     """Return the newer release, or None when this version is the latest."""
     async with _client(transport) as client:
         try:
-            resp = await client.get(LATEST_API.format(repo=repo))
-        except httpx.HTTPError as exc:
-            raise UpdateError("Could not reach GitHub to check for updates. Check your internet connection.") from exc
+            tag = await _latest_tag_from_web(client, repo)
+        except (httpx.HTTPError, UpdateError) as exc:
+            logger.debug("Web update check failed ({}), asking the GitHub API", exc)
+            return await _check_api(client, current, repo)
+        if tag is None or not is_newer(tag, current):
+            return None
+        info = UpdateInfo(version=tag.lstrip("vV"), notes="", published="",
+                          page_url=f"https://github.com/{repo}/releases/tag/{tag}",
+                          installer_url=DOWNLOAD.format(repo=repo, tag=tag, name=INSTALLER_NAME),
+                          installer_name=INSTALLER_NAME,
+                          sha256_url=DOWNLOAD.format(repo=repo, tag=tag, name=INSTALLER_NAME + ".sha256"))
+        try:
+            notes = await client.get(DOWNLOAD.format(repo=repo, tag=tag, name=NOTES_NAME))
+            if notes.status_code == 200:
+                info.notes = notes.text.strip()
+        except httpx.HTTPError:
+            pass
+        return info
+
+
+async def _latest_tag_from_web(client: httpx.AsyncClient, repo: str) -> str | None:
+    """The tag of the newest published release, read from the redirect of /releases/latest."""
+    resp = await client.get(LATEST_WEB.format(repo=repo), follow_redirects=False)
+    if resp.status_code in (301, 302, 303, 307, 308):
+        location = resp.headers.get("location", "")
+        match = re.search(r"/releases/tag/([^/?#]+)", location)
+        if match:
+            return httpx.URL("https://x/" + match.group(1)).path.lstrip("/")  # undo %-escapes
+        if location.rstrip("/").endswith("/releases"):
+            return None  # no release published yet
+    if resp.status_code == 404:
+        return None
+    raise UpdateError(f"Unexpected answer from GitHub ({resp.status_code}).")
+
+
+async def _check_api(client: httpx.AsyncClient, current: str, repo: str) -> UpdateInfo | None:
+    try:
+        resp = await client.get(LATEST_API.format(repo=repo))
+    except httpx.HTTPError as exc:
+        raise UpdateError("Could not reach GitHub to check for updates. Check your internet connection.") from exc
     if resp.status_code == 404:
         return None  # no release published yet
-    if resp.status_code == 403:
+    if resp.status_code in (403, 429):
         raise UpdateError("GitHub is limiting update checks right now. Try again in an hour.")
     if resp.status_code >= 400:
         raise UpdateError(f"GitHub answered with an error ({resp.status_code}) while checking for updates.")
@@ -127,6 +170,8 @@ async def download_update(info: UpdateInfo, dest_dir: Path | None = None,
             expected = _expected_hash(r.text)
         try:
             async with client.stream("GET", info.installer_url) as resp:
+                if resp.status_code == 404:
+                    raise UpdateError("This release has no Windows installer attached yet. Try again later.")
                 if resp.status_code >= 400:
                     raise UpdateError(f"Download failed (HTTP {resp.status_code}).")
                 total = int(resp.headers.get("content-length") or info.installer_size or 0)

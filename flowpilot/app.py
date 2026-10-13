@@ -130,7 +130,7 @@ def main() -> int:
         from PySide6.QtCore import QTimer
 
         services.scheduler.start()
-        window.show()
+        window.show_fitted()
         # dialogs open from a Qt slot, not from inside this coroutine
         QTimer.singleShot(300, window.first_launch)
         await quit_event.wait()

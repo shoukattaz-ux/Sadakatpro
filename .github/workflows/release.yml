@@ -96,4 +96,5 @@ jobs:
           files: |
             dist/installer/FlowPilot-Setup.exe
             dist/installer/FlowPilot-Setup.exe.sha256
+            dist/installer/release-notes.md
             dist/installer/FlowPilot-portable.zip
