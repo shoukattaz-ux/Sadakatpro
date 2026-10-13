@@ -12,6 +12,8 @@ All notable changes to FlowPilot are listed here.
 - Connections detected by an older version are detected again automatically the first time they are used —
   nothing to do by hand. If a start address ever stops working, FlowPilot looks for the endpoints once more by
   itself and saves what it finds.
+- **Flowchart “Fit to window” button** now really fits the whole flow (top to bottom) into the window;
+  click it again to go back to 100 %. Before, it only fitted the width, so a long flow seemed unchanged.
 - When the browser explains a 404 itself (e.g. “Profile not found”), that message is now shown.
 
 ## [0.2.2] — 2026-10-13

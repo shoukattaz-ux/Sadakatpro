@@ -222,6 +222,7 @@ class FlowChart(QWidget):
         self.selected: set[int] = set()
         self.run_marks: dict[int, str] = {}
         self._scale = 1.0
+        self._fitted = False
         self._items: dict[int, NodeItem] = {}
         lay = QVBoxLayout(self)
         lay.setContentsMargins(0, 0, 0, 0)
@@ -230,7 +231,7 @@ class FlowChart(QWidget):
         bar.addWidget(hint, 1)
         for icon, tip, slot in (("minus", "Zoom out", lambda: self.zoom(1 / 1.2)),
                                 ("plus", "Zoom in", lambda: self.zoom(1.2)),
-                                ("maximize", "Fit to window", self.fit)):
+                                ("maximize", "Fit the whole flow in the window (click again for 100%)", self.toggle_fit)):
             b = IconButton(icon, tip, size=26)
             b.clicked.connect(slot)
             bar.addWidget(b)
@@ -275,17 +276,41 @@ class FlowChart(QWidget):
         self.scene.update()
 
     def zoom(self, factor: float) -> None:
-        new = max(0.25, min(2.5, self._scale * factor))
+        new = max(0.1, min(2.5, self._scale * factor))
         self.view.scale(new / self._scale, new / self._scale)
         self._scale = new
+        self._fitted = False
+
+    def _set_scale(self, scale: float) -> None:
+        self.view.resetTransform()
+        self._scale = 1.0
+        self.zoom(scale)
+
+    def toggle_fit(self) -> None:
+        """The toolbar button: show the whole flow; when it already is, back to 100 %."""
+        if self._fitted:
+            self._set_scale(1.0)
+            rect = self.scene.sceneRect()
+            self.view.centerOn(rect.center().x(), rect.top() + self.view.viewport().height() / 2)
+            return
+        self.fit_all()
+
+    def fit_all(self) -> None:
+        """Zoom so the whole flow — width and height — is visible."""
+        rect = self.scene.sceneRect()
+        vp = self.view.viewport()
+        if rect.width() <= 0 or rect.height() <= 0 or vp.width() <= 0 or vp.height() <= 0:
+            return
+        scale = min((vp.width() - 10) / rect.width(), (vp.height() - 10) / rect.height(), 1.5)
+        self._set_scale(scale)
+        self.view.centerOn(rect.center())
+        self._fitted = True
 
     def fit(self) -> None:
         rect = self.scene.sceneRect()
         if rect.width() <= 0:
             return
         # fit the width (the flow scrolls vertically); never smaller than readable
-        self.view.resetTransform()
         sx = (self.view.viewport().width() - 10) / rect.width()
-        self._scale = 1.0
-        self.zoom(max(0.6, min(1.0, sx)))
+        self._set_scale(max(0.6, min(1.0, sx)))
         self.view.centerOn(rect.center().x(), rect.top() + self.view.viewport().height() / 2 / self._scale)

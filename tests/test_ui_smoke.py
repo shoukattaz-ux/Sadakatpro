@@ -327,3 +327,23 @@ def test_export_import_dialogs(ui, qapp, tmp_path, monkeypatch):
     from flowpilot.ui.theme.palette import ThemeManager
 
     ThemeManager.instance().apply("light")
+
+
+def test_flowchart_fit_button_shows_whole_flow(qapp):
+    from flowpilot.ui.widgets.flow_chart import FlowChart
+
+    chart = FlowChart()
+    chart.resize(500, 300)  # a long flow in a short window, like the Flows page
+    chart.show()
+    chart.set_steps([new_step("open_url", url="https://x")] + [new_step("click") for _ in range(12)], {}, [])
+    qapp.processEvents()
+    view = chart.view
+    whole = chart.scene.sceneRect()
+    assert not view.mapToScene(view.viewport().rect()).boundingRect().contains(whole)
+    chart.toggle_fit()
+    qapp.processEvents()
+    assert chart._scale < 1 and chart._fitted  # noqa: SLF001
+    assert view.mapToScene(view.viewport().rect()).boundingRect().adjusted(-2, -2, 2, 2).contains(whole)
+    chart.toggle_fit()  # second click: back to 100 %
+    assert chart._scale == 1.0 and not chart._fitted  # noqa: SLF001
+    chart.close()
