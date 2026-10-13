@@ -27,6 +27,8 @@ from typing import Any
 import httpx
 
 PROBE_ID = "flowpilot-probe-0000"
+#: An action word no API has; routes that also answer to it are catch-alls, not real actions.
+CONTROL_WORD = "flowpilot-no-such-action"
 OPENAPI_PATHS = ("/openapi.json", "/swagger.json", "/api/openapi.json", "/docs/openapi.json", "/v1/openapi.json",
                  "/api-docs", "/swagger/v1/swagger.json", "/api/docs/openapi.json")
 LIST_PATHS = ("/profiles", "/api/profiles", "/api/v1/profiles", "/api/v2/profiles", "/v1/profiles", "/v2/profiles",
@@ -350,35 +352,38 @@ class Discoverer:
                      "/browser", "/api/browser"):
             if root not in prefixes:
                 prefixes.append(root)
-        templates: list[tuple[str, str, str]] = []
+        templates: list[tuple[str, str, str, str]] = []  # method, url, body, control url
         for p in prefixes:
             for w in words:
-                templates += [
-                    ("POST", f"{p}/{{id}}/{w}", ""), ("GET", f"{p}/{{id}}/{w}", ""),
-                    ("POST", f"{p}/{w}/{{id}}", ""), ("GET", f"{p}/{w}/{{id}}", ""),
-                    ("GET", f"{p}/{w}/p/{{id}}", ""), ("POST", f"{p}/{w}/p/{{id}}", ""),
-                    ("GET", f"{p}/{w}?id={{id}}", ""), ("GET", f"{p}/{w}?user_id={{id}}", ""),
-                    ("GET", f"{p}/{w}?profile_id={{id}}", ""),
-                    ("POST", f"{p}/{w}", '{"id": "{id}"}'), ("POST", f"{p}/{w}", '{"profile_id": "{id}"}'),
-                    ("POST", f"{p}/{w}", '{"uuid": "{id}"}'), ("POST", f"{p}/{w}", '{"profileId": "{id}"}'),
-                ]
+                for method, tail, body in (
+                        ("POST", "/{id}/W", ""), ("GET", "/{id}/W", ""),
+                        ("POST", "/W/{id}", ""), ("GET", "/W/{id}", ""),
+                        ("GET", "/W/p/{id}", ""), ("POST", "/W/p/{id}", ""),
+                        ("GET", "/W?id={id}", ""), ("GET", "/W?user_id={id}", ""),
+                        ("GET", "/W?profile_id={id}", ""),
+                        ("POST", "/W", '{"id": "{id}"}'), ("POST", "/W", '{"profile_id": "{id}"}'),
+                        ("POST", "/W", '{"uuid": "{id}"}'), ("POST", "/W", '{"profileId": "{id}"}')):
+                    templates.append((method, p + tail.replace("W", w), body, p + tail.replace("W", CONTROL_WORD)))
         seen: set[tuple[str, str, str]] = set()
         fallback: tuple[str, str, str] | None = None
-        for method, url, body in templates:
+        for method, url, body, control in templates:
             if (method, url, body) in seen:
                 continue
             seen.add((method, url, body))
-            path = url.replace("{id}", PROBE_ID)
             json_body = json.loads(body.replace("{id}", PROBE_ID)) if body else None
-            resp = await self._req(method, path, auth, json_body=json_body)
+            resp = await self._req(method, url.replace("{id}", PROBE_ID), auth, json_body=json_body)
             if resp is None or resp.status_code in (401, 403) or _is_missing_route(resp):
                 continue
-            if resp.status_code in (400, 422) and fallback is None:
-                # the route exists but did not like the request (e.g. wrong body field): keep looking
-                # for a template it accepts, and use this one only if nothing better answers
-                fallback = (method, url, body)
+            # A catch-all route (e.g. GET /profiles/{id}) also answers /profiles/start?id=… with
+            # "profile not found". Ask the same thing with a made-up action word: if that gets the
+            # same answer, the action word was never part of a real route.
+            check = await self._req(method, control.replace("{id}", PROBE_ID), auth, json_body=json_body)
+            if check is not None and not _is_missing_route(check) and check.status_code == resp.status_code:
                 continue
             if resp.status_code in (400, 422):
+                # the route exists but did not like the request (e.g. wrong body field): keep looking
+                # for a template it accepts, and use this one only if nothing better answers
+                fallback = fallback or (method, url, body)
                 continue
             return method, url, body
         return fallback

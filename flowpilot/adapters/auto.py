@@ -8,11 +8,15 @@ result drives the regular :class:`CustomAdapter`. The detected settings are retu
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Callable
 from typing import Any
 
 from flowpilot.adapters.base import AdapterError, ConnectionResult, RemoteProfile
 from flowpilot.adapters.custom import CustomAdapter
 from flowpilot.adapters.discovery import discover
+
+#: Bumped when detection gets smarter, so endpoints saved by an older version are found again.
+DETECT_VERSION = "2"
 
 
 class AutoDetectAdapter(CustomAdapter):
@@ -25,10 +29,14 @@ class AutoDetectAdapter(CustomAdapter):
         super().__init__(*args, **kwargs)
         self._lock = asyncio.Lock()
         self.last_report = ""
+        self._redetected = False
+        #: Called with the new settings after a detection, so they can be saved with the connection.
+        self.on_detected: Callable[[dict[str, Any]], None] | None = None
 
     @property
     def is_detected(self) -> bool:
-        return bool(self.extra.get("detected") and self.extra.get("start_url") and self.extra.get("list_url"))
+        return bool(self.extra.get("detected") == DETECT_VERSION and self.extra.get("start_url")
+                    and self.extra.get("list_url"))
 
     def detected_settings(self) -> dict[str, Any]:
         return dict(self.extra) if self.is_detected else {}
@@ -45,8 +53,10 @@ class AutoDetectAdapter(CustomAdapter):
                                    + "\nTip: if the browser shows its API documentation or endpoint list, choose "
                                      "the “Custom” type and enter the addresses there.")
             await self.http.aclose()
-            self.extra.update(result.config, detected="1")
+            self.extra.update(result.config, detected=DETECT_VERSION)
             self.http = self._make_client()
+            if self.on_detected is not None:
+                self.on_detected(self.detected_settings())
 
     async def test_connection(self) -> ConnectionResult:
         try:
@@ -62,7 +72,16 @@ class AutoDetectAdapter(CustomAdapter):
 
     async def start_profile(self, profile_id: str) -> str:
         await self.ensure_detected()
-        return await super().start_profile(profile_id)
+        try:
+            return await super().start_profile(profile_id)
+        except AdapterError as exc:
+            # the saved start address may be wrong (the browser was updated, or an older FlowPilot
+            # guessed it): find the endpoints once more and try again
+            if "(HTTP 404)" not in str(exc) or self._redetected:
+                raise
+            self._redetected = True
+            await self.ensure_detected(force=True)
+            return await super().start_profile(profile_id)
 
     async def stop_profile(self, profile_id: str) -> None:
         await self.ensure_detected()

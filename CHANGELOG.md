@@ -2,6 +2,18 @@
 
 All notable changes to FlowPilot are listed here.
 
+## [0.2.3] — 2026-10-13
+
+### Fixed
+- **“Any browser (auto-detect)”: “The browser API does not have this address (HTTP 404) …/profiles/start?id=…”**
+  when opening a profile. Some browser APIs answer *any* address under `/profiles/…` with “profile not found”,
+  and detection took such an address for the start button. Detection now double-checks every address it
+  finds against a made-up one and only keeps real ones.
+- Connections detected by an older version are detected again automatically the first time they are used —
+  nothing to do by hand. If a start address ever stops working, FlowPilot looks for the endpoints once more by
+  itself and saves what it finds.
+- When the browser explains a 404 itself (e.g. “Profile not found”), that message is now shown.
+
 ## [0.2.2] — 2026-10-13
 
 ### New

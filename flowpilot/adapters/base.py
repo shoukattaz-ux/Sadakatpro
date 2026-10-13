@@ -11,6 +11,24 @@ import httpx
 from loguru import logger
 
 
+MISSING_ADDRESS = "The browser API does not have this address"
+
+
+def _api_message(resp: httpx.Response) -> str:
+    """The error text of a JSON answer like {"detail": "Profile not found"}; '' for a plain 'Not Found'."""
+    try:
+        data = resp.json()
+    except ValueError:
+        return ""
+    if not isinstance(data, dict):
+        return ""
+    for key in ("detail", "message", "msg", "error", "error_message"):
+        value = data.get(key)
+        if isinstance(value, str) and value.strip() and value.strip().lower() not in ("not found", "404 not found"):
+            return value.strip()[:300]
+    return ""
+
+
 class AdapterError(RuntimeError):
     """A problem talking to an anti-detect browser; ``str(exc)`` is user friendly."""
 
@@ -140,8 +158,12 @@ class HttpClient:
                         f"The browser API refused the request (HTTP {resp.status_code}). Check the API key."
                     )
                 if resp.status_code == 404:
-                    raise AdapterError(f"The browser API does not have this address (HTTP 404): {url}\n"
-                                       "If this is not the browser type you chose, use the type "
+                    said = _api_message(resp)
+                    if said:  # the address exists, the browser says what is wrong (e.g. "Profile not found")
+                        raise AdapterError(f"The browser says: {said} (HTTP 404)")
+                    raise AdapterError(f"{MISSING_ADDRESS} (HTTP 404): {url}\n"
+                                       "Open Settings → Connections, edit this connection and press Test "
+                                       "connection. For a browser that is not in the list, use the type "
                                        "“Any browser (auto-detect)” — it finds the right addresses itself.")
                 if resp.status_code >= 400:
                     raise AdapterError(f"The browser API returned an error (HTTP {resp.status_code}): {resp.text[:300]}")

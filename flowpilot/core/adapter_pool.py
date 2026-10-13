@@ -4,6 +4,7 @@ Local Chrome adapter tracks its browser processes)."""
 from __future__ import annotations
 
 import asyncio
+import json
 
 from loguru import logger
 
@@ -34,7 +35,20 @@ class AdapterPool:
             except RuntimeError:
                 pass
         self._adapters[conn.id] = (fp, adapter)
+        if hasattr(adapter, "on_detected"):
+            adapter.on_detected = lambda settings, cid=conn.id: self._store_detected(cid, settings)
         return adapter
+
+    def _store_detected(self, conn_id: int, settings: dict) -> None:
+        """Save endpoints found by an auto-detect connection, keeping the live adapter."""
+        conn = self.connections.get(conn_id)
+        cached = self._adapters.get(conn_id)
+        if conn is None or not settings:
+            return
+        conn.extra_json = json.dumps(settings)
+        conn = self.connections.save(conn)
+        if cached:
+            self._adapters[conn_id] = (self._fingerprint(conn), cached[1])
 
     def build_unpooled(self, conn: Connection) -> BrowserAdapter:
         """A fresh adapter (e.g. for 'Test connection' with unsaved values)."""

@@ -162,7 +162,7 @@ async def test_auto_adapter_end_to_end(make):
     assert endpoint in ("http://127.0.0.1:51234", "ws://127.0.0.1:9333/devtools/browser/x", "http://127.0.0.1:40123")
     await adapter.stop_profile(profiles[0].id)
     saved = adapter.detected_settings()
-    assert saved["detected"] == "1" and saved["ws_path"] == "auto"
+    assert saved["detected"] == "2" and saved["ws_path"] == "auto"
     # a new adapter built from the saved settings works without detecting again
     again = create_adapter("auto", "http://127.0.0.1:9378", KEY, saved)
     assert again.is_detected
@@ -182,3 +182,73 @@ async def test_auto_adapter_reports_unreachable_and_api_errors():
     adapter.http = adapter._make_client()  # noqa: SLF001
     with pytest.raises(AdapterError, match="profile not found"):
         await adapter.start_profile("does-not-exist")
+
+
+def catch_all_api(calls: list) -> httpx.MockTransport:
+    """GET /profiles/{id} answers *any* word with "Profile not found" — e.g. /profiles/start?id=…
+    looks like a start route but is not. The real start is POST /profiles/{id}/open."""
+
+    def handler(req: httpx.Request) -> httpx.Response:
+        calls.append((req.method, str(req.url)))
+        if req.headers.get("X-API-Key") != KEY:
+            return httpx.Response(401, json={"detail": "Invalid API key"})
+        parts = [p for p in req.url.path.split("/") if p]
+        if req.method == "GET" and parts == ["profiles"]:
+            return httpx.Response(200, json={"profiles": PROFILES})
+        if req.method == "GET" and len(parts) == 2 and parts[0] == "profiles":
+            if parts[1] in ("p1", "p2"):
+                return httpx.Response(200, json=PROFILES[0])
+            return httpx.Response(404, json={"detail": "Profile not found"})
+        if req.method == "POST" and len(parts) == 3 and parts[0] == "profiles" and parts[2] in ("open", "close"):
+            if parts[1] not in ("p1", "p2"):
+                return httpx.Response(404, json={"detail": "Profile not found"})
+            if parts[2] == "open":
+                return httpx.Response(200, json={"status": "running", "debug_port": 45111})
+            return httpx.Response(200, json={"status": "stopped"})
+        return httpx.Response(404, json={"detail": "Not Found"})
+
+    return httpx.MockTransport(handler)
+
+
+async def test_catch_all_route_is_not_taken_for_start():
+    result = await discover("http://127.0.0.1:9378", KEY, catch_all_api([]))
+    assert result.ok, result.summary()
+    c = result.config
+    assert (c["start_method"], c["start_url"]) == ("POST", "/profiles/{id}/open")
+    assert (c["stop_method"], c["stop_url"]) == ("POST", "/profiles/{id}/close")
+
+
+async def test_old_or_wrong_saved_endpoints_are_found_again(tmp_path):
+    from flowpilot.core.adapter_pool import AdapterPool
+    from flowpilot.security import SecretBox
+    from flowpilot.storage.db import Database
+    from flowpilot.storage.models import Connection
+    from flowpilot.storage.repositories import Repositories
+
+    wrong = {"list_url": "/profiles", "list_items_path": "profiles", "list_id_path": "id", "list_name_path": "name",
+             "start_url": "/profiles/start?id={id}", "start_method": "GET", "ws_path": "auto",
+             "success_path": "auto", "key_location": "header", "key_name": "X-API-Key", "key_prefix": ""}
+    # saved by v0.2.1 (detection version 1): detected again before the first start
+    old = create_adapter("auto", "http://127.0.0.1:9378", KEY, {**wrong, "detected": "1"})
+    assert not old.is_detected
+    old._transport = catch_all_api([])  # noqa: SLF001
+    assert await old.start_profile("p1") == "http://127.0.0.1:45111"
+
+    # saved by this version but wrong anyway: a 404 on start triggers one new detection, which is saved
+    db = Database(tmp_path / "db.sqlite")
+    repos = Repositories(db, SecretBox(tmp_path, use_dpapi=False))
+    conn = repos.connections.save(Connection(type="auto", name="Stealth", base_url="http://127.0.0.1:9378",
+                                             extra_json=json.dumps({**wrong, "detected": "2"})), api_key=KEY)
+    pool = AdapterPool(repos.connections)
+    adapter = pool.get(conn)
+    assert adapter.is_detected
+    adapter._transport = catch_all_api([])  # noqa: SLF001
+    adapter.http = adapter._make_client()  # noqa: SLF001
+    assert await adapter.start_profile("p1") == "http://127.0.0.1:45111"
+    saved = repos.connections.extra(repos.connections.get(conn.id))
+    assert saved["start_url"] == "/profiles/{id}/open"
+    assert pool.get(repos.connections.get(conn.id)) is adapter  # still the same live adapter
+    with pytest.raises(AdapterError, match="Profile not found"):
+        await adapter.start_profile("missing")  # a real "no such profile" is reported, not retried forever
+    await pool.aclose()
+    db.dispose()
